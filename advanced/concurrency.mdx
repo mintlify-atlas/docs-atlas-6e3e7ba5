@@ -254,7 +254,7 @@ If you enable both:
 - `concurrency_limit` is ignored
 - You'll see a warning in the PAC controller logs
 
-See [Running PipelineRuns](/docs/guide/running#canceling-a-pipelinerun) for more details.
+See [Running PipelineRuns](/guides/running-pipelines#canceling-a-pipelinerun) for more details.
 
 ### Concurrency + max-keep-runs
 
@@ -284,7 +284,7 @@ spec:
 - `concurrency_limit`: Controls how many run **simultaneously**
 - `max-keep-runs`: Controls how many completed runs are **retained**
 
-See [Cleanup](/docs/advanced/cleanup) for retention policies.
+See [Cleanup](/advanced/cleanup) for retention policies.
 
 ## Kubernetes-Native Queueing with Kueue
 
@@ -503,7 +503,7 @@ spec:
 
 ## See Also
 
-- [Repository CRD](/docs/guide/repositorycrd) - Complete Repository configuration reference
-- [Cleanup](/docs/advanced/cleanup) - Automatic cleanup and retention policies  
-- [Running PipelineRuns](/docs/guide/running) - How PipelineRuns are triggered and managed
+- [Repository CRD](/guides/repository-crd) - Complete Repository configuration reference
+- [Cleanup](/advanced/cleanup) - Automatic cleanup and retention policies  
+- [Running PipelineRuns](/guides/running-pipelines) - How PipelineRuns are triggered and managed
 - [Kueue Documentation](https://kueue.sigs.k8s.io/) - Advanced Kubernetes-native job queueing

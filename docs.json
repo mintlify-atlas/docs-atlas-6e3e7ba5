@@ -107,6 +107,9 @@
               "cli/describe",
               "cli/resolve",
               "cli/webhook",
+              "cli/info",
+              "cli/cel",
+              "cli/completion",
               "cli/version"
             ]
           }

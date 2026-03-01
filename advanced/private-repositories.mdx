@@ -223,7 +223,7 @@ The token has the same permissions as the GitHub App installation or the webhook
 
 ### Token Scoping
 
-By default, the GitHub App token is scoped only to the repository where the event originated. To extend access to additional repositories, see [Repository CRD Token Scoping](/docs/guide/repositorycrd#scoping-github-token-to-a-list-of-private-and-public-repositories).
+By default, the GitHub App token is scoped only to the repository where the event originated. To extend access to additional repositories, see [Repository CRD Token Scoping](/guides/repository-crd#scoping-github-token-to-a-list-of-private-and-public-repositories).
 
 ## Fetching Remote Tasks from Private Repositories
 
@@ -277,7 +277,7 @@ spec:
 
 The PAC resolver automatically uses the generated authentication secret.
 
-See the [Resolver documentation](/docs/guide/resolver#remote-http-url-from-a-private-github-repository) for more details.
+See the [Resolver documentation](/guides/pipeline-resolution#remote-http-url-from-a-private-github-repository) for more details.
 
 ## Authentication Methods
 
@@ -412,7 +412,7 @@ workspaces:
   - Add repositories to `github_app_token_scope_repos`
   - Verify the GitHub App is installed on all required repos
   
-  See [Token Scoping](/docs/guide/repositorycrd#scoping-github-token-to-a-list-of-private-and-public-repositories) for details.
+  See [Token Scoping](/guides/repository-crd#scoping-github-token-to-a-list-of-private-and-public-repositories) for details.
 </Accordion>
 
 <Accordion title="Token Expired or Invalid">
@@ -546,7 +546,7 @@ spec:
 
 ## See Also
 
-- [Repository CRD](/docs/guide/repositorycrd) - Repository configuration reference
-- [Resolver](/docs/guide/resolver) - Fetching remote tasks and pipelines
-- [Authoring PipelineRuns](/docs/guide/authoringprs) - Template variables reference
-- [GitHub App Installation](/docs/install/github) - Setting up GitHub App authentication
+- [Repository CRD](/guides/repository-crd) - Repository configuration reference
+- [Resolver](/guides/pipeline-resolution) - Fetching remote tasks and pipelines
+- [Authoring PipelineRuns](/guides/creating-pipelines) - Template variables reference
+- [GitHub App Installation](/providers/github-app) - Setting up GitHub App authentication

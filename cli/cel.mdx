@@ -1,0 +1,134 @@
+---
+title: tkn pac cel
+description: Evaluate CEL expressions interactively with webhook payloads
+---
+
+The `tkn pac cel` command provides an interactive CEL expression evaluator that helps you test and debug CEL expressions used in PipelineRun annotations before deploying them.
+
+## Usage
+
+```bash
+tkn pac cel [flags]
+```
+
+## Description
+
+The CEL evaluator allows you to interactively test CEL expressions against real or simulated webhook payloads. It automatically detects the Git provider from webhook headers and payload structure, making it easy to verify your event matching logic.
+
+This is particularly useful when creating complex `on-cel-expression` annotations for conditional pipeline execution.
+
+## Flags
+
+<ParamField path="--body" type="string">
+  Path to a JSON file containing the webhook payload body
+</ParamField>
+
+<ParamField path="--headers" type="string">
+  Path to a JSON file containing the webhook headers
+</ParamField>
+
+<ParamField path="--provider" type="string">
+  Specify the Git provider explicitly (github, gitlab, bitbucket-cloud, bitbucket-datacenter, forgejo)
+  
+  If not specified, the provider is auto-detected from the payload
+</ParamField>
+
+<ParamField path="--github-token" type="string">
+  GitHub token for API operations when evaluating expressions that access GitHub API
+</ParamField>
+
+## Interactive Mode
+
+When you run `tkn pac cel` without files, it starts in interactive mode where you can:
+
+1. Type CEL expressions directly
+2. View available variables and their values
+3. Test expressions against the loaded webhook payload
+4. Get immediate feedback on expression evaluation
+
+<Note>
+Type `help` in interactive mode to see available commands and variables.
+</Note>
+
+## Examples
+
+### Evaluate expression with webhook payload
+
+```bash
+tkn pac cel --body payload.json --headers headers.json
+```
+
+### Specify provider explicitly
+
+```bash
+tkn pac cel --provider github --body github-payload.json
+```
+
+### Test file path matching
+
+```bash
+# In interactive mode, test expressions like:
+# files.all.exists(x, x.matches("src/.*\\.go"))
+tkn pac cel --body pull-request-payload.json
+```
+
+## Common Use Cases
+
+### Test path change detection
+
+Create a `payload.json` with your pull request webhook data and test path matching:
+
+```cel
+files.all.exists(x, x.matches("docs/.*"))
+```
+
+### Verify event conditions
+
+Test complex conditions before adding them to your PipelineRun:
+
+```cel
+event == "pull_request" && source_branch.startsWith("feature/")
+```
+
+### Debug custom parameters
+
+Test parameter filtering expressions:
+
+```cel
+target_branch == "main" || target_branch == "production"
+```
+
+## Available Variables
+
+The CEL evaluator provides access to all standard PAC variables:
+
+- `event` - Event type (pull_request, push, incoming)
+- `source_branch` - Source branch name
+- `target_branch` - Target branch name
+- `files` - File changes (for pull requests)
+- `body` - Full webhook payload
+- `headers` - Webhook headers
+- Custom variables specific to each provider
+
+<Info>
+Run the command in interactive mode and type `help` to see the complete list of variables for your provider.
+</Info>
+
+## Troubleshooting
+
+<Accordion title="Expression evaluation fails">
+Verify your JSON files contain valid webhook payloads. You can capture real payloads using webhook inspection tools or from your Git provider's webhook delivery logs.
+</Accordion>
+
+<Accordion title="Variables not available">
+Ensure the payload contains the necessary fields. Some variables are only available for specific event types (e.g., `files` is only available for pull requests).
+</Accordion>
+
+<Accordion title="Provider not detected">
+Use the `--provider` flag to explicitly specify your Git provider if auto-detection fails.
+</Accordion>
+
+## See Also
+
+- [Event Matching Guide](/guides/event-matching) - Learn about CEL expressions in annotations
+- [Creating Pipelines](/guides/creating-pipelines) - Using CEL in pipeline definitions

@@ -1,0 +1,203 @@
+---
+title: tkn pac completion
+description: Generate shell completion scripts for tkn-pac
+---
+
+The `tkn pac completion` command generates shell completion scripts that enable tab completion for tkn-pac commands, subcommands, and flags.
+
+## Usage
+
+```bash
+tkn pac completion SHELL
+```
+
+## Supported Shells
+
+- `bash`
+- `zsh`
+- `fish`
+- `powershell`
+
+## Installation
+
+### Bash
+
+<Steps>
+  <Step title="Generate completion script">
+    ```bash
+    tkn pac completion bash > /tmp/tkn-pac-completion.bash
+    ```
+  </Step>
+  
+  <Step title="Source the script">
+    Add to your `~/.bashrc`:
+    ```bash
+    source /tmp/tkn-pac-completion.bash
+    ```
+    
+    Or install system-wide:
+    ```bash
+    sudo cp /tmp/tkn-pac-completion.bash /etc/bash_completion.d/tkn-pac
+    ```
+  </Step>
+  
+  <Step title="Reload your shell">
+    ```bash
+    source ~/.bashrc
+    ```
+  </Step>
+</Steps>
+
+### Zsh
+
+<Steps>
+  <Step title="Generate completion script">
+    ```bash
+    tkn pac completion zsh > "${fpath[1]}/_tkn-pac"
+    ```
+  </Step>
+  
+  <Step title="Enable completion">
+    Add to your `~/.zshrc` if not already present:
+    ```bash
+    autoload -U compinit
+    compinit
+    ```
+  </Step>
+  
+  <Step title="Reload your shell">
+    ```bash
+    source ~/.zshrc
+    ```
+  </Step>
+</Steps>
+
+<Note>
+For oh-my-zsh, you may need to reload the completion cache:
+```bash
+rm ~/.zcompdump*
+compinit
+```
+</Note>
+
+### Fish
+
+<Steps>
+  <Step title="Generate completion script">
+    ```bash
+    tkn pac completion fish > ~/.config/fish/completions/tkn-pac.fish
+    ```
+  </Step>
+  
+  <Step title="Reload fish">
+    Start a new fish shell or run:
+    ```bash
+    source ~/.config/fish/config.fish
+    ```
+  </Step>
+</Steps>
+
+### PowerShell
+
+<Steps>
+  <Step title="Generate completion script">
+    ```powershell
+    tkn pac completion powershell > tkn-pac.ps1
+    ```
+  </Step>
+  
+  <Step title="Source the script">
+    Add to your PowerShell profile:
+    ```powershell
+    . .\tkn-pac.ps1
+    ```
+  </Step>
+</Steps>
+
+## Examples
+
+### Bash with Homebrew
+
+If you installed tkn-pac via Homebrew on macOS:
+
+```bash
+tkn pac completion bash > $(brew --prefix)/etc/bash_completion.d/tkn-pac
+```
+
+### Zsh with Oh-My-Zsh
+
+```bash
+mkdir -p ~/.oh-my-zsh/custom/completions
+tkn pac completion zsh > ~/.oh-my-zsh/custom/completions/_tkn-pac
+```
+
+### Test Completion
+
+After installing, test completion by typing:
+
+```bash
+tkn pac <TAB>
+```
+
+You should see available subcommands:
+
+```
+bootstrap  create  describe  generate  logs  repository  resolve  version  webhook
+```
+
+## What Gets Completed
+
+Shell completion provides suggestions for:
+
+- **Commands**: `bootstrap`, `create`, `generate`, etc.
+- **Subcommands**: `repository list`, `repository delete`, `webhook add`
+- **Flags**: `--namespace`, `--repository`, `--last`
+- **Flag values**: Git providers, event types (where applicable)
+
+## Troubleshooting
+
+<Accordion title="Completion not working after installation">
+Make sure you've reloaded your shell configuration:
+
+```bash
+# Bash
+source ~/.bashrc
+
+# Zsh
+source ~/.zshrc
+
+# Fish - start a new shell
+exec fish
+```
+</Accordion>
+
+<Accordion title="Command not found: compgen (Bash)">
+Install bash-completion:
+
+```bash
+# macOS
+brew install bash-completion@2
+
+# Ubuntu/Debian
+sudo apt-get install bash-completion
+
+# RHEL/CentOS
+sudo yum install bash-completion
+```
+</Accordion>
+
+<Accordion title="Completions not appearing in Zsh">
+Check that completion is enabled in your `~/.zshrc`:
+
+```bash
+autoload -U compinit
+compinit
+```
+
+If using oh-my-zsh, verify the completions directory is in your `fpath`.
+</Accordion>
+
+## See Also
+
+- [CLI Overview](/cli/overview) - Introduction to tkn-pac CLI
+- [Installation](/cli/installation) - Installing tkn-pac

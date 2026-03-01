@@ -9,7 +9,7 @@ Pipelines as Code supports GitLab through webhooks, providing full integration w
 
 ## Prerequisites
 
-Before starting, ensure you have [installed Pipelines as Code](/docs/install/installation) on your Kubernetes cluster.
+Before starting, ensure you have [installed Pipelines as Code](/installation/overview) on your Kubernetes cluster.
 
 ## Create GitLab Personal Access Token
 
@@ -257,7 +257,7 @@ spec:
       comment_strategy: "disable_all"
 ```
 
-See [Repository CRD documentation](/docs/guide/repositorycrd#controlling-pullmerge-request-comment-volume) for details.
+See [Repository CRD documentation](/guides/repository-crd#controlling-pullmerge-request-comment-volume) for details.
 
 ## Managing Webhooks and Tokens
 
@@ -326,4 +326,4 @@ After configuring GitLab:
 2. Test by creating a merge request or pushing commits
 3. Monitor pipeline status in the Pipelines tab or MR comments
 
-See the [Repository CRD documentation](/docs/guide/repositorycrd) for advanced configuration options.
+See the [Repository CRD documentation](/guides/repository-crd) for advanced configuration options.

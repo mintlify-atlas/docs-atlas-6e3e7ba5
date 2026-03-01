@@ -1,0 +1,213 @@
+---
+title: tkn pac info
+description: Show installation information and test glob expressions
+---
+
+The `tkn pac info` command provides information about your Pipelines as Code installation and includes utilities for testing configuration.
+
+## Subcommands
+
+### tkn pac info install
+
+Shows installation information for Pipelines as Code, including controller status and GitHub App configuration (if using GitHub App authentication).
+
+#### Usage
+
+```bash
+tkn pac info install [flags]
+```
+
+#### Flags
+
+<ParamField path="--namespace" type="string" default="pipelines-as-code">
+  Namespace where Pipelines as Code is installed
+</ParamField>
+
+<ParamField path="--kubeconfig" type="string">
+  Path to kubeconfig file (defaults to `~/.kube/config`)
+</ParamField>
+
+#### Output
+
+The command displays:
+
+- **Controller status**: Running/stopped state of PAC components
+- **Version**: Installed PAC version
+- **ConfigMap settings**: Key configuration values
+- **GitHub App info**: App ID, webhook URL, and installation details (if applicable)
+
+#### Examples
+
+**Check default installation:**
+
+```bash
+tkn pac info install
+```
+
+**Check installation in custom namespace:**
+
+```bash
+tkn pac info install --namespace my-pac-namespace
+```
+
+**Sample output:**
+
+```
+Pipelines as Code Installation Info
+====================================
+
+Controller:        Running
+Watcher:          Running
+Webhook:          Running
+Version:          v0.24.0
+
+GitHub App:
+  App ID:         123456
+  Webhook URL:    https://pac.example.com
+  Installations:  3
+
+ConfigMap (pipelines-as-code):
+  application-name:              Pipelines as Code CI
+  remote-tasks:                  true
+  secret-auto-create:            true
+  tekton-dashboard-url:          https://dashboard.example.com
+```
+
+### tkn pac info globbing
+
+Tests glob pattern expressions used in PipelineRun annotations like `on-path-change` and `on-path-change-ignore`.
+
+#### Usage
+
+```bash
+tkn pac info globbing PATTERN FILE [FILE...] [flags]
+```
+
+#### Arguments
+
+- `PATTERN` - Glob pattern to test (e.g., `src/**/*.go`)
+- `FILE` - One or more file paths to match against the pattern
+
+#### Examples
+
+**Test a single file pattern:**
+
+```bash
+tkn pac info globbing "src/**/*.go" src/main.go
+```
+
+Output:
+```
+✓ src/main.go matches src/**/*.go
+```
+
+**Test multiple files:**
+
+```bash
+tkn pac info globbing "docs/**/*.md" docs/guide.md README.md src/code.go
+```
+
+Output:
+```
+✓ docs/guide.md matches docs/**/*.md
+✗ README.md does not match docs/**/*.md
+✗ src/code.go does not match docs/**/*.md
+```
+
+**Test negative patterns:**
+
+```bash
+tkn pac info globbing "!vendor/**" vendor/pkg/lib.go src/main.go
+```
+
+#### Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Validate path patterns" icon="check">
+    Test `on-path-change` patterns before adding them to PipelineRuns
+  </Card>
+  <Card title="Debug file matching" icon="bug">
+    Understand why pipelines aren't triggering for certain file changes
+  </Card>
+  <Card title="Test ignore patterns" icon="ban">
+    Verify `on-path-change-ignore` patterns work as expected
+  </Card>
+  <Card title="Complex globs" icon="code">
+    Test advanced glob patterns with multiple wildcards
+  </Card>
+</CardGroup>
+
+## Common Patterns
+
+### Glob Pattern Examples
+
+```bash
+# Match all Go files in src/ recursively
+tkn pac info globbing "src/**/*.go" src/pkg/utils.go
+
+# Match only top-level markdown files
+tkn pac info globbing "*.md" README.md docs/guide.md
+
+# Match files in specific directories
+tkn pac info globbing "{src,test}/**/*.ts" src/app.ts test/app.test.ts
+
+# Ignore vendor directory
+tkn pac info globbing "!vendor/**" vendor/lib.go
+```
+
+### Integration with PipelineRuns
+
+Test the same patterns you'll use in your PipelineRun annotations:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  annotations:
+    pipelinesascode.tekton.dev/on-path-change: "[src/**/*.go, test/**/*.go]"
+    pipelinesascode.tekton.dev/on-path-change-ignore: "[vendor/**]"
+```
+
+Test these patterns:
+
+```bash
+# Should match
+tkn pac info globbing "src/**/*.go" src/main.go
+
+# Should not match (ignored)
+tkn pac info globbing "!vendor/**" vendor/deps.go
+```
+
+## Troubleshooting
+
+<Accordion title="Connection refused error">
+Verify your kubeconfig is correct and the cluster is accessible:
+
+```bash
+kubectl get pods -n pipelines-as-code
+```
+
+If the namespace doesn't exist, PAC may not be installed.
+</Accordion>
+
+<Accordion title="GitHub App info not showing">
+GitHub App information only appears if:
+- You're using GitHub App authentication (not webhook)
+- You have admin access to the namespace
+- The PAC controller ConfigMap contains GitHub App settings
+</Accordion>
+
+<Accordion title="Glob pattern not matching as expected">
+Remember that glob patterns are:
+- **Case-sensitive** on most systems
+- **Slash-sensitive**: `*` doesn't match `/`
+- **Prefix matching**: Use `**/` to match subdirectories
+
+Test with explicit file paths to verify behavior.
+</Accordion>
+
+## See Also
+
+- [Installation Overview](/installation/overview) - Installing Pipelines as Code
+- [Event Matching](/guides/event-matching) - Using glob patterns in annotations
+- [Configuration](/operations/configuration) - ConfigMap settings
