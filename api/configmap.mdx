@@ -1,0 +1,368 @@
+---
+title: 'ConfigMap Reference'
+description: 'Global configuration settings for Pipelines as Code'
+---
+
+The Pipelines as Code ConfigMap (`pipelines-as-code`) contains global settings that apply to all repositories unless overridden at the repository level.
+
+## Location
+
+The ConfigMap is typically installed in the `pipelines-as-code` namespace:
+
+```bash
+kubectl get configmap pipelines-as-code -n pipelines-as-code
+```
+
+## Configuration Fields
+
+### Application Settings
+
+<ParamField path="application-name" type="string" default="Pipelines as Code CI">
+  The application name used in status updates and comments. If using the GitHub App, you will need to customize this label in the GitHub App settings as well.
+
+  ```yaml
+  application-name: "Pipelines as Code CI"
+  ```
+</ParamField>
+
+### Secret Management
+
+<ParamField path="secret-auto-create" type="boolean" default="true">
+  Whether to automatically create a secret with the token to be used by git-clone.
+
+  ```yaml
+  secret-auto-create: "true"
+  ```
+</ParamField>
+
+<ParamField path="secret-github-app-token-scoped" type="boolean" default="true">
+  By default, only generate tokens scoped to the repository from where the payload comes from. This is important when the GitHub app is installed on a GitHub organization with a mix of public and private repositories where some users do not have access.
+
+  Set to `false` if you trust every user in your organization to access any repos or are not planning to install your GitHub application globally on a GitHub Organization.
+
+  ```yaml
+  secret-github-app-token-scoped: "true"
+  ```
+</ParamField>
+
+<ParamField path="secret-github-app-scope-extra-repos" type="string">
+  If you don't want to completely disable the scoping of the token but still want some other repos (on the same installation ID) available from the token, add extra owner/repo here.
+
+  You can have multiple owner/repositories separated by commas.
+
+  ```yaml
+  secret-github-app-scope-extra-repos: "owner/private-repo1, org/repo2"
+  ```
+</ParamField>
+
+### Hub Configuration
+
+<ParamField path="hub-url" type="string" default="https://artifacthub.io">
+  The default hub URL to use for fetching remote tasks.
+
+  ```yaml
+  hub-url: "https://artifacthub.io"
+  ```
+</ParamField>
+
+<ParamField path="hub-catalog-type" type="string" default="artifacthub">
+  The default hub catalog type. Supported values: `artifacthub`, `tektonhub`.
+
+  ```yaml
+  hub-catalog-type: "artifacthub"
+  ```
+</ParamField>
+
+<ParamField path="catalog-{N}-*" type="object">
+  Additional hub catalogs configuration. You can configure multiple catalogs by incrementing the number (catalog-1-*, catalog-2-*, etc.).
+
+  <Expandable title="Catalog Configuration Fields">
+    <ParamField path="catalog-{N}-id" type="string">
+      Unique identifier for this catalog.
+    </ParamField>
+
+    <ParamField path="catalog-{N}-name" type="string">
+      Name of the catalog.
+    </ParamField>
+
+    <ParamField path="catalog-{N}-url" type="string">
+      URL of the catalog API.
+    </ParamField>
+
+    <ParamField path="catalog-{N}-type" type="string">
+      Type of catalog (`tektonhub` or `artifacthub`).
+    </ParamField>
+  </Expandable>
+
+  ```yaml
+  catalog-1-id: "custom"
+  catalog-1-name: "tekton"
+  catalog-1-url: "https://api.custom.hub/v1"
+  catalog-1-type: "tektonhub"
+  ```
+</ParamField>
+
+<ParamField path="remote-tasks" type="boolean" default="true">
+  Allow fetching remote tasks from configured hubs.
+
+  ```yaml
+  remote-tasks: "true"
+  ```
+</ParamField>
+
+### Dashboard Integration
+
+<ParamField path="tekton-dashboard-url" type="string">
+  URL of the Tekton dashboard. Pipelines as Code generates URLs to PipelineRuns on the Tekton dashboard using this base URL.
+
+  ```yaml
+  tekton-dashboard-url: "https://tekton.example.com"
+  ```
+</ParamField>
+
+<ParamField path="custom-console-name" type="string">
+  Name of a custom console to use instead of the Tekton dashboard.
+
+  ```yaml
+  custom-console-name: "Console Name"
+  ```
+</ParamField>
+
+<ParamField path="custom-console-url" type="string">
+  Base URL of the custom console.
+
+  ```yaml
+  custom-console-url: "https://url"
+  ```
+</ParamField>
+
+<ParamField path="custom-console-url-pr-details" type="string">
+  Template URL for PipelineRun details. Supports variables: `{{ namespace }}`, `{{ pr }}`.
+
+  ```yaml
+  custom-console-url-pr-details: "https://url/ns/{{ namespace }}/{{ pr }}"
+  ```
+</ParamField>
+
+<ParamField path="custom-console-url-pr-tasklog" type="string">
+  Template URL for task logs. Supports variables: `{{ namespace }}`, `{{ pr }}`, `{{ task }}`.
+
+  ```yaml
+  custom-console-url-pr-tasklog: "https://url/ns/{{ namespace }}/{{ pr }}/logs/{{ task }}"
+  ```
+</ParamField>
+
+### Error Detection and Logging
+
+<ParamField path="error-log-snippet" type="boolean" default="true">
+  Enable or disable the feature to show a log snippet of the failed task when there is an error in a Pipeline.
+
+  You may want to disable this if you think your pipeline may leak sensitive values.
+
+  ```yaml
+  error-log-snippet: "true"
+  ```
+</ParamField>
+
+<ParamField path="error-log-snippet-number-of-lines" type="integer" default="3">
+  Number of lines to display in error log snippets when `error-log-snippet` is set to `true`.
+
+  The GitHub Check interface has a 65,535 character limit, so consider using a conservative value.
+
+  ```yaml
+  error-log-snippet-number-of-lines: "3"
+  ```
+</ParamField>
+
+<ParamField path="error-detection-from-container-logs" type="boolean" default="true">
+  Enable or disable inspection of container logs to detect error messages and expose them as annotations on Pull Requests. Only GitHub Apps is supported.
+
+  ```yaml
+  error-detection-from-container-logs: "true"
+  ```
+</ParamField>
+
+<ParamField path="error-detection-max-number-of-lines" type="integer" default="50">
+  How many lines to grab from the container when inspecting logs for error detection. Increasing this value may increase the watcher memory usage. Use `-1` for unlimited lines.
+
+  ```yaml
+  error-detection-max-number-of-lines: "50"
+  ```
+</ParamField>
+
+<ParamField path="error-detection-simple-regexp" type="string">
+  The default regexp used for simple error detection. Must be a valid regular expression.
+
+  ```yaml
+  error-detection-simple-regexp: |
+    ^(?P<filename>[^:]*):(?P<line>[0-9]+):(?P<column>[0-9]+)?([ ]*)?(?P<error>.*)
+  ```
+</ParamField>
+
+### Concurrency Control
+
+<ParamField path="enable-cancel-in-progress-on-pull-requests" type="boolean" default="false">
+  Global setting to control whether Pipelines as Code should automatically cancel any in-progress PipelineRuns associated with a pull request when that pull request is updated. This helps prevent multiple redundant runs from executing simultaneously.
+
+  ```yaml
+  enable-cancel-in-progress-on-pull-requests: "false"
+  ```
+</ParamField>
+
+<ParamField path="enable-cancel-in-progress-on-push" type="boolean" default="false">
+  Global setting to determine whether Pipelines as Code should automatically cancel in-progress PipelineRuns triggered by a push event if a new push occurs on the same branch. This prevents overlapping or redundant runs for the same branch.
+
+  ```yaml
+  enable-cancel-in-progress-on-push: "false"
+  ```
+</ParamField>
+
+### Bitbucket Cloud Settings
+
+<ParamField path="bitbucket-cloud-check-source-ip" type="boolean" default="true">
+  Since public Bitbucket doesn't have the concept of webhook secrets, secure requests by querying https://ip-ranges.atlassian.com/. This only happens for public Bitbucket (when provider.url is not set in repository spec).
+
+  <Warning>
+    Disabling this could be a security issue. A malicious user could send a PR with a modified PipelineRun that grabs secrets, then send a malicious webhook payload to trigger it.
+  </Warning>
+
+  ```yaml
+  bitbucket-cloud-check-source-ip: "true"
+  ```
+</ParamField>
+
+<ParamField path="bitbucket-cloud-additional-source-ip" type="string">
+  Add extra IPs (e.g., `127.0.0.1`) or networks (e.g., `127.0.0.0/16`) separated by commas.
+
+  ```yaml
+  bitbucket-cloud-additional-source-ip: "192.168.1.0/24, 10.0.0.1"
+  ```
+</ParamField>
+
+### Retention Policies
+
+<ParamField path="max-keep-run-upper-limit" type="integer">
+  Defines the upper limit for the `max-keep-run` annotation value which a user can set on a PipelineRun. The value set on the annotation should be less than or equal to the upper limit; otherwise, the upper limit will be used while cleaning up.
+
+  ```yaml
+  max-keep-run-upper-limit: "100"
+  ```
+</ParamField>
+
+<ParamField path="default-max-keep-runs" type="integer">
+  If defined, applies to all PipelineRuns that don't have the `max-keep-runs` annotation.
+
+  ```yaml
+  default-max-keep-runs: "10"
+  ```
+</ParamField>
+
+### Auto-Configuration
+
+<ParamField path="auto-configure-new-github-repo" type="boolean" default="false">
+  Whether to auto-configure newly created repositories. This will create a new namespace and Repository CR. Supported only with GitHub App.
+
+  ```yaml
+  auto-configure-new-github-repo: "false"
+  ```
+</ParamField>
+
+<ParamField path="auto-configure-repo-namespace-template" type="string">
+  Template to generate the namespace name for an auto-configured GitHub repository. Supported fields: `{{repo_owner}}`, `{{repo_name}}`.
+
+  ```yaml
+  auto-configure-repo-namespace-template: "{{repo_owner}}-{{repo_name}}"
+  ```
+</ParamField>
+
+<ParamField path="auto-configure-repo-repository-template" type="string">
+  Template to generate the Repository CR name for an auto-configured GitHub repository. Supported fields: `{{repo_owner}}`, `{{repo_name}}`.
+
+  ```yaml
+  auto-configure-repo-repository-template: "{{repo_owner}}-{{repo_name}}-repo-cr"
+  ```
+</ParamField>
+
+### Security and Authorization
+
+<ParamField path="remember-ok-to-test" type="boolean" default="false">
+  Enable or disable the feature to re-run the CI if a push event happens on a pull request after `/ok-to-test` has been done once.
+
+  By default it is `false`, meaning `/ok-to-test` should be done on each iteration. Set to `true` to remember the approval across push events.
+
+  ```yaml
+  remember-ok-to-test: "false"
+  ```
+</ParamField>
+
+<ParamField path="require-ok-to-test-sha" type="boolean" default="false">
+  Enforces that a pull request's commit SHA must be specified in an `/ok-to-test` comment. This prevents a race condition where a malicious user could push a bad commit after the `/ok-to-test` comment is posted but before the CI runs.
+
+  ```yaml
+  require-ok-to-test-sha: "false"
+  ```
+</ParamField>
+
+<ParamField path="skip-push-event-for-pr-commits" type="boolean" default="true">
+  When enabled, prevents duplicate pipeline runs when a commit appears in both a push event and a pull request. If a push event comes from a commit that is part of an open pull request, the push event will be skipped.
+
+  ```yaml
+  skip-push-event-for-pr-commits: "true"
+  ```
+</ParamField>
+
+## Complete Example
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+  labels:
+    app.kubernetes.io/part-of: pipelines-as-code
+data:
+  application-name: "My CI System"
+  secret-auto-create: "true"
+  secret-github-app-token-scoped: "true"
+  secret-github-app-scope-extra-repos: "org/shared-repo"
+  
+  hub-url: "https://artifacthub.io"
+  hub-catalog-type: "artifacthub"
+  remote-tasks: "true"
+  
+  tekton-dashboard-url: "https://tekton.example.com"
+  
+  error-log-snippet: "true"
+  error-log-snippet-number-of-lines: "5"
+  error-detection-from-container-logs: "true"
+  error-detection-max-number-of-lines: "100"
+  
+  enable-cancel-in-progress-on-pull-requests: "true"
+  enable-cancel-in-progress-on-push: "false"
+  
+  max-keep-run-upper-limit: "50"
+  default-max-keep-runs: "10"
+  
+  remember-ok-to-test: "true"
+  require-ok-to-test-sha: "false"
+  skip-push-event-for-pr-commits: "true"
+```
+
+## Updating Configuration
+
+To update the ConfigMap:
+
+```bash
+kubectl edit configmap pipelines-as-code -n pipelines-as-code
+```
+
+Or apply changes from a file:
+
+```bash
+kubectl apply -f pipelines-as-code-config.yaml
+```
+
+<Note>
+  Most ConfigMap changes take effect immediately, but some may require restarting the Pipelines as Code controller.
+</Note>

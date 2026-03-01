@@ -1,0 +1,112 @@
+---
+title: 'Repository CRD'
+description: 'Complete reference for the Repository Custom Resource Definition'
+---
+
+The Repository CRD is the representation of a Git repository from a Git provider platform. It defines how Pipelines as Code connects to your repository and manages pipeline execution.
+
+## Overview
+
+The Repository resource is namespaced and can be referenced using the short name `repo`.
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repository
+  namespace: my-namespace
+spec:
+  url: "https://github.com/owner/repo"
+  git_provider:
+    type: github
+    secret:
+      name: github-token
+      key: token
+```
+
+## Resource Structure
+
+<ResponseField name="apiVersion" type="string" required>
+  API version for the Repository resource. Must be `pipelinesascode.tekton.dev/v1alpha1`.
+</ResponseField>
+
+<ResponseField name="kind" type="string" required>
+  Resource kind. Must be `Repository`.
+</ResponseField>
+
+<ResponseField name="metadata" type="ObjectMeta" required>
+  Standard Kubernetes metadata including name, namespace, labels, and annotations.
+</ResponseField>
+
+<ResponseField name="spec" type="RepositorySpec" required>
+  Specification of the desired behavior of the repository. See [Repository Spec](/api/repository-spec) for detailed field documentation.
+</ResponseField>
+
+<ResponseField name="pipelinerun_status" type="[]RepositoryRunStatus">
+  Status information for pipeline runs executed for this repository. See [Repository Status](/api/repository-status) for detailed field documentation.
+</ResponseField>
+
+## Resource Shortcuts
+
+The Repository CRD supports the following shortname:
+
+- `repo` - Short form for `repository`
+
+```bash
+# List all repositories
+kubectl get repo
+
+# Describe a specific repository
+kubectl describe repo my-repository
+```
+
+## Custom Columns
+
+When listing repositories with `kubectl get repo`, the following columns are displayed:
+
+- **URL** - The Git repository URL
+- **Succeeded** - Success status of the last PipelineRun
+- **Reason** - Reason for the last PipelineRun status
+- **StartTime** - When the last PipelineRun started
+- **CompletionTime** - When the last PipelineRun completed
+
+## Complete Example
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: example-repo
+  namespace: pipelines-as-code
+  labels:
+    app: my-app
+spec:
+  url: "https://github.com/organization/repository"
+  concurrency_limit: 5
+  git_provider:
+    type: github
+    url: "https://github.com"
+    user: "pac-bot"
+    secret:
+      name: github-app-secret
+      key: github-app-token
+    webhook_secret:
+      name: webhook-secret
+      key: webhook-token
+  settings:
+    pipelinerun_provenance: "source"
+    policy:
+      ok_to_test:
+        - "trusted-user"
+        - "maintainer"
+      pull_request:
+        - "contributor"
+    github:
+      comment_strategy: "update"
+```
+
+## Related Resources
+
+- [Repository Spec](/api/repository-spec) - Detailed specification fields
+- [Repository Status](/api/repository-status) - Status field reference
+- [Settings Reference](/api/settings) - Settings configuration options

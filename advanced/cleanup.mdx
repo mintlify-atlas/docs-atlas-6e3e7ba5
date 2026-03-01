@@ -1,0 +1,491 @@
+---
+title: Automatic Cleanup
+description: Configure automatic cleanup and retention policies for PipelineRuns
+---
+
+## Overview
+
+Pipelines-as-Code can automatically clean up old PipelineRuns to prevent namespace clutter and resource exhaustion. The cleanup mechanism keeps only a specified number of recent PipelineRuns and removes older ones after successful completion.
+
+## Configuration
+
+### Annotation-Based Cleanup
+
+Add the `max-keep-runs` annotation to your PipelineRun:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: my-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "5"
+    pipelinesascode.tekton.dev/on-event: "[push, pull_request]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: build
+        taskSpec:
+          steps:
+            - name: build
+              image: golang:1.22
+              script: |
+                go build ./...
+```
+
+<ParamField path="pipelinesascode.tekton.dev/max-keep-runs" type="string" required={false}>
+  Maximum number of PipelineRuns to retain for this pipeline definition.
+  
+  - **Type:** String representation of an integer
+  - **Default:** No automatic cleanup
+  - **Scope:** Per PipelineRun definition (not per repository)
+  - **Trigger:** Cleanup runs after each successful PipelineRun completion
+</ParamField>
+
+### Global Default Configuration
+
+Set a cluster-wide default in the `pipelines-as-code` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+data:
+  max-keep-runs: "10"
+```
+
+This applies to all PipelineRuns that don't have the annotation explicitly set.
+
+<Note>
+Annotation-level settings override the global ConfigMap default.
+</Note>
+
+## How Cleanup Works
+
+### Trigger Conditions
+
+Cleanup is triggered when:
+1. A PipelineRun completes successfully (Succeeded condition)
+2. The `max-keep-runs` annotation is set (or global default exists)
+3. The number of completed PipelineRuns exceeds the limit
+
+### Cleanup Behavior
+
+1. **Counts Completed Runs**: PAC counts PipelineRuns with the same base name
+2. **Sorts by Creation Time**: Older PipelineRuns are identified
+3. **Skips Running/Pending**: PipelineRuns that are still running or pending are preserved
+4. **Includes Unknown**: PipelineRuns with Unknown status are included in cleanup
+5. **Deletes Oldest**: Excess PipelineRuns beyond the limit are deleted
+
+### Retention Scope
+
+Cleanup applies **per PipelineRun definition**, not per repository:
+
+```bash
+.tekton/
+├── build.yaml        # max-keep-runs: 5 (keeps 5 build runs)
+├── test.yaml         # max-keep-runs: 10 (keeps 10 test runs)
+└── deploy.yaml       # max-keep-runs: 3 (keeps 3 deploy runs)
+```
+
+Each PipelineRun definition tracks its own retention independently.
+
+## Examples
+
+<Accordion title="Basic Retention Policy">
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: pr-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "5"
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: test
+        taskSpec:
+          steps:
+            - name: run-tests
+              image: alpine
+              script: echo "Running tests"
+```
+
+**Behavior:**
+- First 5 PRs: All PipelineRuns are kept
+- 6th PR: Oldest PipelineRun is deleted after completion
+- Ongoing: Always maintains exactly 5 completed runs
+</Accordion>
+
+<Accordion title="Different Retention by Pipeline Type">
+```yaml
+# Short retention for frequent commits
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: lint
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "3"
+    pipelinesascode.tekton.dev/on-event: "[push]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: lint
+        taskSpec:
+          steps:
+            - name: run-lint
+              image: golangci/golangci-lint
+              script: golangci-lint run
+---
+# Longer retention for important builds
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: release-build
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "20"
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: build-release
+        taskSpec:
+          steps:
+            - name: build
+              image: golang:1.22
+              script: go build -o app ./cmd
+```
+</Accordion>
+
+<Accordion title="Environment-Specific Retention">
+```yaml
+# Development - minimal retention
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: dev-deploy
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "2"
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[develop]"
+spec:
+  # ... deploy to dev
+---
+# Staging - moderate retention
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: staging-deploy
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "10"
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[staging]"
+spec:
+  # ... deploy to staging
+---
+# Production - maximum retention
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: prod-deploy
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "50"
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  # ... deploy to production
+```
+</Accordion>
+
+<Accordion title="Integration with Concurrency Limit">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-app
+spec:
+  url: "https://github.com/myorg/my-app"
+  concurrency_limit: 3  # Max 3 concurrent runs
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: build-test
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "10"  # Keep 10 completed runs
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+spec:
+  # ...
+```
+
+**Combined behavior:**
+- Maximum 3 PipelineRuns execute concurrently
+- Up to 10 completed PipelineRuns are retained
+- Total PipelineRuns in namespace: 3 (running) + 10 (completed) = 13 maximum
+</Accordion>
+
+## What Gets Cleaned Up
+
+### Included in Cleanup
+
+- **Completed PipelineRuns**: Succeeded or Failed status
+- **Unknown Status**: PipelineRuns with Unknown status
+- **Associated Resources**: TaskRuns, Pods, and PersistentVolumeClaims owned by the PipelineRun
+- **Generated Secrets**: `pac-gitauth-*` secrets with ownerReference to the PipelineRun
+
+### Excluded from Cleanup
+
+- **Running PipelineRuns**: Currently executing
+- **Pending PipelineRuns**: Queued but not yet started
+- **Manual Runs**: PipelineRuns without the annotation (unless global default is set)
+- **Other Repositories**: Only PipelineRuns from the same pipeline definition
+
+<Note>
+Cleanup uses Kubernetes ownerReferences, so when a PipelineRun is deleted, all its child resources (TaskRuns, Pods, Secrets) are automatically deleted.
+</Note>
+
+## Monitoring Cleanup
+
+### View Recent PipelineRuns
+
+```bash
+# List PipelineRuns sorted by creation time
+kubectl get pipelineruns -n my-namespace \
+  --sort-by=.metadata.creationTimestamp
+
+# List PipelineRuns for a specific pipeline
+kubectl get pipelineruns -n my-namespace \
+  -l tekton.dev/pipeline=my-pipeline
+
+# Count PipelineRuns per pipeline
+kubectl get pipelineruns -n my-namespace \
+  -o jsonpath='{range .items[*]}{.metadata.labels.tekton\.dev/pipeline}{"\n"}{end}' \
+  | sort | uniq -c
+```
+
+### Check Cleanup Activity
+
+PAC logs cleanup operations:
+
+```bash
+# View PAC controller logs
+kubectl logs -n pipelines-as-code \
+  deployment/pipelines-as-code-controller \
+  | grep -i cleanup
+
+# Example log output:
+# {"level":"info","msg":"cleaning up old pipelinerun","pipelinerun":"build-pr-123-abc"}
+```
+
+### Prometheus Metrics
+
+If Prometheus monitoring is enabled, track cleanup metrics:
+
+```promql
+# Number of PipelineRuns cleaned up
+sum(rate(pac_pipelinerun_cleanup_total[5m])) by (repository)
+
+# Current PipelineRun count per repository
+count(tekton_pipelinerun_info) by (repository)
+```
+
+## Use Cases
+
+<Accordion title="High-Frequency CI/CD">
+```yaml
+# Frequent commits, short retention needed
+metadata:
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "3"
+```
+
+For repositories with 50+ commits per day:
+- Keeps only the 3 most recent runs
+- Prevents namespace overflow
+- Reduces storage costs
+</Accordion>
+
+<Accordion title="Audit and Compliance">
+```yaml
+# Regulatory requirement to keep 90 days of build history
+metadata:
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "180"
+```
+
+For compliance scenarios:
+- Retains extensive build history
+- Supports audit trails
+- May require additional storage capacity
+</Accordion>
+
+<Accordion title="Resource-Constrained Clusters">
+```yaml
+# Minimal storage, aggressive cleanup
+metadata:
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "1"
+```
+
+For development/test clusters:
+- Keeps only the latest run
+- Minimizes storage usage
+- Immediate cleanup after each run
+</Accordion>
+
+<Accordion title="Multi-Environment Pipelines">
+```yaml
+# Different retention for each environment
+# dev: 2 runs, staging: 10 runs, prod: 50 runs
+```
+
+Balances retention needs with storage costs across environments.
+</Accordion>
+
+## Storage Impact
+
+Each PipelineRun creates several Kubernetes resources:
+
+- **PipelineRun object**: ~10-50 KB
+- **TaskRun objects**: ~10-30 KB each (multiple per pipeline)
+- **Pod objects**: ~10-20 KB each
+- **Logs**: 1-100 MB per run (depending on verbosity)
+- **PVCs**: 1-10 GB if using workspace volumes
+
+### Calculation Example
+
+**Scenario:** 100 commits per day, 3 PipelineRuns per commit
+
+```
+Without cleanup:
+- Daily: 300 PipelineRuns
+- Monthly: 9,000 PipelineRuns
+- Storage: 9,000 × 20 MB avg = 180 GB
+
+With max-keep-runs: 10
+- Total retained: 10 PipelineRuns
+- Storage: 10 × 20 MB = 200 MB
+- Savings: 99.9%
+```
+
+## Best Practices
+
+1. **Start Conservative**: Begin with low retention (5-10 runs) and increase if needed
+
+2. **Different Policies for Different Pipelines**:
+   - Frequent/fast pipelines (lint): 2-3 runs
+   - Standard CI/CD: 10-20 runs
+   - Release/deployment: 50+ runs
+
+3. **Consider Storage Costs**: Calculate storage impact before setting high retention
+
+4. **Match Retention to Value**:
+   - Keep more runs for critical pipelines
+   - Keep fewer runs for exploratory/test pipelines
+
+5. **Monitor Cleanup**: Check logs to ensure cleanup is working as expected
+
+6. **Export Historical Data**: If you need long-term retention, export PipelineRun data to external storage
+
+7. **Set Global Default**: Establish a reasonable cluster-wide default to prevent unbounded growth
+
+8. **Document Policies**: Explain retention policies in your project's CI/CD documentation
+
+## Troubleshooting
+
+<Accordion title="PipelineRuns Not Being Cleaned Up">
+  **Possible causes:**
+  - Annotation not set or has typo (`max-keep-runs` not `max-keep-run`)
+  - PipelineRuns are not completing successfully
+  - Still under the retention limit
+  - Global ConfigMap setting is higher than expected
+  
+  **Debug:**
+  ```bash
+  # Check annotation
+  kubectl get pr my-pipeline-run -o jsonpath='{.metadata.annotations}'
+  
+  # Count completed runs
+  kubectl get pr -l tekton.dev/pipeline=my-pipeline --field-selector=status.conditions[0].status=True
+  ```
+</Accordion>
+
+<Accordion title="Too Many PipelineRuns Deleted">
+  **Cause:** Retention limit set too low
+  
+  **Solution:** Increase `max-keep-runs` value:
+  ```yaml
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "20"  # Increased from 5
+  ```
+</Accordion>
+
+<Accordion title="Namespace Still Growing">
+  **Possible causes:**
+  - Multiple PipelineRun definitions without retention
+  - Long-running PipelineRuns not completing
+  - PVCs not cleaned up (not owned by PipelineRun)
+  - Other resources in namespace
+  
+  **Investigate:**
+  ```bash
+  # Find PipelineRuns without max-keep-runs
+  kubectl get pr -o json | jq -r '.items[] | select(.metadata.annotations["pipelinesascode.tekton.dev/max-keep-runs"] == null) | .metadata.name'
+  
+  # Check for orphaned PVCs
+  kubectl get pvc -n my-namespace
+  ```
+</Accordion>
+
+<Accordion title="Critical Run Was Deleted">
+  **Prevention:** Increase retention for important pipelines
+  
+  **Recovery:** 
+  - Check Repository CR status (keeps last 5 run statuses)
+  - Review Git provider status checks/comments
+  - Restore from backup if available
+  - Re-run the pipeline if needed
+</Accordion>
+
+## Advanced Configuration
+
+### Custom Retention Logic
+
+For advanced scenarios, you can implement custom cleanup logic using Tekton's `PipelineRun` lifecycle hooks:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: custom-cleanup
+spec:
+  pipelineSpec:
+    finally:
+      - name: custom-cleanup-logic
+        taskSpec:
+          steps:
+            - name: cleanup
+              image: bitnami/kubectl
+              script: |
+                # Custom cleanup logic
+                # Example: Delete runs older than 7 days
+                kubectl get pr -n $(context.pipelineRun.namespace) \
+                  -o json | jq -r --arg cutoff "$(date -d '7 days ago' -u +%Y-%m-%dT%H:%M:%SZ)" \
+                  '.items[] | select(.metadata.creationTimestamp < $cutoff) | .metadata.name' \
+                  | xargs -I {} kubectl delete pr {} -n $(context.pipelineRun.namespace)
+```
+
+<Warning>
+Custom cleanup logic can interfere with PAC's built-in cleanup. Use with caution.
+</Warning>
+
+## See Also
+
+- [Repository CRD](/docs/guide/repositorycrd) - Repository configuration reference
+- [Concurrency](/docs/advanced/concurrency) - Managing concurrent PipelineRuns
+- [Settings](/docs/install/settings) - Global PAC configuration options
+- [Running PipelineRuns](/docs/guide/running) - PipelineRun lifecycle and management

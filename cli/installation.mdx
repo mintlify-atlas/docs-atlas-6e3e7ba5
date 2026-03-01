@@ -1,0 +1,335 @@
+---
+title: Installation
+description: Install the tkn-pac CLI for Pipelines as Code
+---
+
+# Installing tkn-pac CLI
+
+This guide covers multiple ways to install the `tkn-pac` CLI on your system.
+
+## Prerequisites
+
+Before installing `tkn-pac`, ensure you have:
+- **Kubernetes cluster access** (kubectl configured)
+- **Tekton Pipelines** installed on your cluster (v0.50.0+)
+
+## Installation Methods
+
+<CodeGroup>
+
+```bash Homebrew (macOS/Linux)
+brew install openshift-pipelines/pipelines-as-code/tektoncd-pac
+```
+
+```bash Direct Download (Linux)
+curl -L https://github.com/openshift-pipelines/pipelines-as-code/releases/latest/download/tkn-pac-linux-amd64 -o tkn-pac
+chmod +x tkn-pac
+sudo mv tkn-pac /usr/local/bin/
+```
+
+```bash Direct Download (macOS Intel)
+curl -L https://github.com/openshift-pipelines/pipelines-as-code/releases/latest/download/tkn-pac-darwin-amd64 -o tkn-pac
+chmod +x tkn-pac
+sudo mv tkn-pac /usr/local/bin/
+```
+
+```bash Direct Download (macOS Apple Silicon)
+curl -L https://github.com/openshift-pipelines/pipelines-as-code/releases/latest/download/tkn-pac-darwin-arm64 -o tkn-pac
+chmod +x tkn-pac
+sudo mv tkn-pac /usr/local/bin/
+```
+
+```bash Go Install
+go install github.com/openshift-pipelines/pipelines-as-code/cmd/tkn-pac@latest
+```
+
+```bash Container (Podman/Docker)
+podman run -e KUBECONFIG=/tmp/kube/config \
+  -v ${HOME}/.kube:/tmp/kube \
+  -it ghcr.io/openshift-pipelines/pipelines-as-code/tkn-pac:stable tkn-pac help
+```
+
+```bash Arch Linux (AUR)
+yay -S tkn-pac
+```
+
+</CodeGroup>
+
+## Platform-Specific Instructions
+
+### Homebrew (macOS/Linux)
+
+The easiest way to install on macOS or Linux with Homebrew:
+
+```bash
+brew install openshift-pipelines/pipelines-as-code/tektoncd-pac
+```
+
+**Upgrade to latest version:**
+
+```bash
+brew upgrade openshift-pipelines/pipelines-as-code/tektoncd-pac
+```
+
+<Note>
+  Homebrew on Linux is fully supported. See [Homebrew on Linux](https://docs.brew.sh/Homebrew-on-Linux) for setup.
+</Note>
+
+### Binary Downloads
+
+Download pre-built binaries from the [releases page](https://github.com/openshift-pipelines/pipelines-as-code/releases).
+
+**Available platforms:**
+- **Linux**: x86_64, ARM64 (tarballs, RPM, Debian packages)
+- **macOS**: x86_64 (Intel), ARM64 (Apple Silicon)
+- **Windows**: x86_64, ARM64
+
+#### Linux (Debian/Ubuntu)
+
+```bash
+# Download .deb package
+curl -LO https://github.com/openshift-pipelines/pipelines-as-code/releases/latest/download/tkn-pac_linux_amd64.deb
+
+# Install
+sudo dpkg -i tkn-pac_linux_amd64.deb
+```
+
+#### Linux (RHEL/Fedora/CentOS)
+
+```bash
+# Download .rpm package
+curl -LO https://github.com/openshift-pipelines/pipelines-as-code/releases/latest/download/tkn-pac_linux_amd64.rpm
+
+# Install
+sudo rpm -i tkn-pac_linux_amd64.rpm
+```
+
+#### Windows
+
+**PowerShell:**
+
+```powershell
+# Download latest release
+Invoke-WebRequest -Uri "https://github.com/openshift-pipelines/pipelines-as-code/releases/latest/download/tkn-pac-windows-amd64.exe" -OutFile "tkn-pac.exe"
+
+# Move to PATH location
+Move-Item tkn-pac.exe C:\Windows\System32\tkn-pac.exe
+```
+
+<Note>
+  On Windows, tkn-pac looks for the Kubernetes config in `%USERPROFILE%\.kube\config`.
+</Note>
+
+### Container Image
+
+Run `tkn-pac` directly from a container:
+
+```bash
+# Using Podman
+podman run -e KUBECONFIG=/tmp/kube/config \
+  -v ${HOME}/.kube:/tmp/kube \
+  -it ghcr.io/openshift-pipelines/pipelines-as-code/tkn-pac:stable tkn-pac version
+
+# Using Docker
+docker run -e KUBECONFIG=/tmp/kube/config \
+  -v ${HOME}/.kube:/tmp/kube \
+  -it ghcr.io/openshift-pipelines/pipelines-as-code/tkn-pac:stable tkn-pac version
+```
+
+**Available tags:**
+- `stable` - Latest stable release
+- `latest` - Development build
+- `v0.x.x` - Specific version
+
+### Go Install
+
+Install from source using Go:
+
+```bash
+go install github.com/openshift-pipelines/pipelines-as-code/cmd/tkn-pac@latest
+```
+
+<Warning>
+  Ensure `$GOPATH/bin` is in your `PATH`.
+</Warning>
+
+### Arch Linux (AUR)
+
+Install from the [Arch User Repository](https://aur.archlinux.org/packages/tkn-pac/):
+
+```bash
+yay -S tkn-pac
+```
+
+Or with any other AUR helper:
+
+```bash
+paru -S tkn-pac
+```
+
+## Verification
+
+Verify the installation:
+
+```bash
+tkn pac version
+```
+
+**Expected output:**
+
+```
+Pipelines-as-Code version: v0.x.x
+```
+
+## Shell Completion
+
+Enable shell completion for better CLI experience:
+
+<CodeGroup>
+
+```bash Bash
+# Generate completion script
+tkn pac completion bash > /etc/bash_completion.d/tkn-pac
+
+# Or for current user
+tkn pac completion bash > ~/.tkn-pac-completion
+echo 'source ~/.tkn-pac-completion' >> ~/.bashrc
+```
+
+```bash Zsh
+# Generate completion script
+tkn pac completion zsh > "${fpath[1]}/_tkn-pac"
+
+# Reload completions
+autoload -U compinit && compinit
+```
+
+```bash Fish
+tkn pac completion fish > ~/.config/fish/completions/tkn-pac.fish
+```
+
+```powershell PowerShell
+tkn pac completion powershell | Out-String | Invoke-Expression
+```
+
+</CodeGroup>
+
+## Using as Tekton CLI Plugin
+
+If you have the [Tekton CLI (tkn)](https://github.com/tektoncd/cli) installed, `tkn-pac` can be used as a plugin:
+
+```bash
+# Both of these work identically
+tkn pac list
+tkn-pac list
+```
+
+The `tkn` CLI automatically discovers plugins named `tkn-*` in your `PATH`.
+
+## Updating
+
+### Homebrew
+
+```bash
+brew upgrade openshift-pipelines/pipelines-as-code/tektoncd-pac
+```
+
+### Binary
+
+Download and replace the binary with the latest version from the [releases page](https://github.com/openshift-pipelines/pipelines-as-code/releases).
+
+### Go
+
+```bash
+go install github.com/openshift-pipelines/pipelines-as-code/cmd/tkn-pac@latest
+```
+
+### Container
+
+Pull the latest image:
+
+```bash
+podman pull ghcr.io/openshift-pipelines/pipelines-as-code/tkn-pac:stable
+```
+
+## Uninstalling
+
+### Homebrew
+
+```bash
+brew uninstall tektoncd-pac
+```
+
+### Binary
+
+```bash
+sudo rm /usr/local/bin/tkn-pac
+```
+
+### Debian Package
+
+```bash
+sudo dpkg -r tkn-pac
+```
+
+### RPM Package
+
+```bash
+sudo rpm -e tkn-pac
+```
+
+## Troubleshooting
+
+### Command Not Found
+
+If you get "command not found" after installation:
+
+1. Ensure the binary is in your `PATH`:
+   ```bash
+   echo $PATH
+   ```
+
+2. Check if the binary is executable:
+   ```bash
+   ls -l $(which tkn-pac)
+   ```
+
+3. Try specifying the full path:
+   ```bash
+   /usr/local/bin/tkn-pac version
+   ```
+
+### Permission Denied
+
+If you get permission errors:
+
+```bash
+# Make the binary executable
+chmod +x tkn-pac
+```
+
+### Kubeconfig Issues
+
+If the CLI can't connect to your cluster:
+
+```bash
+# Verify kubectl works
+kubectl cluster-info
+
+# Check kubeconfig location
+echo $KUBECONFIG
+
+# Specify kubeconfig explicitly
+tkn pac --kubeconfig ~/.kube/config version
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CLI Overview" icon="terminal" href="/cli/overview">
+    Learn about available commands
+  </Card>
+  <Card title="Bootstrap" icon="rocket" href="/cli/bootstrap">
+    Set up your first installation
+  </Card>
+</CardGroup>

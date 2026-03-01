@@ -1,0 +1,420 @@
+---
+title: tkn pac describe
+description: Describe a Pipelines-as-Code Repository and its associated PipelineRuns
+---
+
+# tkn pac describe
+
+Describe a Pipelines-as-Code Repository and show detailed information about its associated PipelineRuns.
+
+## Synopsis
+
+```bash
+tkn pac describe [repository-name] [flags]
+tkn pac desc [repository-name] [flags]
+```
+
+## Description
+
+The `describe` command provides detailed information about a Repository CRD including:
+
+- Repository metadata (name, namespace, URL)
+- All PipelineRuns associated with the repository
+- Run status, timing, and links
+- **Failure analysis** - Shows last 10 lines of failed tasks with error highlighting
+- Optional Kubernetes events for debugging
+
+It's particularly useful for debugging failed PipelineRuns and understanding repository activity.
+
+## Usage Examples
+
+<CodeGroup>
+
+```bash Interactive
+# Select repository interactively
+tkn pac describe
+```
+
+```bash Specify Repository
+# Describe specific repository
+tkn pac describe myorg-app
+```
+
+```bash Specific Namespace
+# Describe from specific namespace
+tkn pac describe myorg-app -n production
+```
+
+```bash Show Specific PipelineRun
+# Show details for specific PipelineRun
+tkn pac describe myorg-app --target-pipelinerun myorg-app-pr-123
+```
+
+```bash Show Events
+# Include Kubernetes events for debugging
+tkn pac describe myorg-app --show-events
+```
+
+```bash Real Time Format
+# Show RFC3339 timestamps
+tkn pac describe myorg-app --use-realtime
+```
+
+</CodeGroup>
+
+## Arguments
+
+<ParamField path="repository-name" type="string">
+  Repository name (optional - prompts if not provided)
+</ParamField>
+
+## Flags
+
+<ParamField path="-n, --namespace" type="string">
+  Namespace containing the repository
+</ParamField>
+
+<ParamField path="-t, --target-pipelinerun" type="string">
+  Show information for a specific PipelineRun only
+</ParamField>
+
+<ParamField path="--use-realtime" type="boolean" default="false">
+  Display timestamps as RFC3339 instead of relative time
+</ParamField>
+
+<ParamField path="--show-events" type="boolean" default="false">
+  Show Kubernetes events associated with the repository
+  
+  Useful for debugging issues that cannot be reported on the Git provider interface
+</ParamField>
+
+## Output Example
+
+### Basic Output
+
+```bash
+$ tkn pac describe myorg-app
+
+Repository: myorg-app
+Namespace:  production
+URL:        https://github.com/myorg/app
+
+PipelineRuns:
+
+STATUS      EVENT          BRANCH  SHA      STARTED       DURATION  NAME
+Succeeded   pull_request   main    a3c5e8d  2 hours ago   5m 23s    myorg-app-pr-125
+Running     pull_request   feat    b1d4f2a  30 mins ago   2m 15s    myorg-app-pr-124
+Failed      push           main    c7e9a1b  1 day ago     3m 45s    myorg-app-pr-123
+```
+
+### With Failure Details
+
+When the last PipelineRun failed, error details are automatically shown:
+
+```bash
+$ tkn pac describe myorg-app
+
+Repository: myorg-app
+Namespace:  production  
+URL:        https://github.com/myorg/app
+
+PipelineRuns:
+
+STATUS    EVENT   BRANCH  SHA      STARTED     DURATION  NAME
+Failed    push    main    c7e9a1b  1 hour ago  3m 45s    myorg-app-pr-123
+
+Last PipelineRun Failed:
+
+Task: run-tests
+  ERROR: Tests failed with exit code 1
+  === RUN   TestHandler
+  --- FAIL: TestHandler (0.00s)
+      handler_test.go:42: Expected status code 200, got 500
+  FAIL
+  exit status 1
+
+Task: build-image  
+  ERROR: Build failed: missing Dockerfile
+  Error: stat Dockerfile: no such file or directory
+```
+
+### With Events
+
+```bash
+$ tkn pac describe myorg-app --show-events
+
+Repository: myorg-app
+Namespace:  production
+URL:        https://github.com/myorg/app
+
+PipelineRuns:
+STATUS      EVENT          BRANCH  SHA      STARTED       DURATION  NAME
+Succeeded   pull_request   main    a3c5e8d  2 hours ago   5m 23s    myorg-app-pr-125
+
+Events:
+
+TYPE      REASON              AGE     FROM                 MESSAGE
+Normal    Started             2h      tekton-controller    PipelineRun myorg-app-pr-125 started
+Normal    Running             2h      tekton-controller    Tasks Completed: 1 (Failed: 0, Cancelled 0), Running: 1, Incomplete: 2
+Normal    Succeeded           2h      tekton-controller    Tasks Completed: 4 (Failed: 0, Cancelled 0), Skipped: 0
+Warning   Failed              1d      tekton-controller    PipelineRun myorg-app-pr-123 failed
+```
+
+### Targeting Specific PipelineRun
+
+```bash
+$ tkn pac describe myorg-app -t myorg-app-pr-123
+
+Repository: myorg-app
+Namespace:  production
+URL:        https://github.com/myorg/app
+
+PipelineRuns:
+
+STATUS    EVENT   BRANCH  SHA      STARTED     DURATION  NAME
+Failed    push    main    c7e9a1b  1 hour ago  3m 45s    myorg-app-pr-123
+
+PipelineRun Failure Details:
+
+Task: run-tests
+  ERROR: Tests failed with exit code 1
+  ...
+```
+
+## Column Descriptions
+
+| Column | Description |
+|--------|-------------|
+| **STATUS** | PipelineRun status with color coding |
+| **EVENT** | Event type (pull_request, push) |
+| **BRANCH** | Target branch name |
+| **SHA** | Commit SHA (first 7 characters, clickable) |
+| **STARTED** | When the PipelineRun started |
+| **DURATION** | Total execution time |
+| **NAME** | PipelineRun name (clickable to logs) |
+
+## Status Colors
+
+The output uses colors to indicate status:
+
+- **Green** - Succeeded
+- **Red** - Failed
+- **Yellow** - Running, Pending
+- **Gray** - Cancelled, Skipped
+
+## Clickable Links
+
+In modern terminals, links are clickable:
+
+- **SHA** - Opens commit in Git provider
+- **NAME** - Opens PipelineRun logs in console/dashboard
+
+Use Ctrl+Click (Linux/Windows) or Cmd+Click (macOS).
+
+## Failure Analysis
+
+When a PipelineRun fails, `describe` automatically:
+
+1. **Identifies failed tasks**
+2. **Extracts last 10 lines** of logs from each failed task
+3. **Highlights error patterns**:
+   - `ERROR`
+   - `FAILURE`
+   - `FATAL`
+   - `Failed`
+   - Exit codes
+
+### Error Highlighting
+
+Error keywords are highlighted in red for easy identification:
+
+```bash
+Task: run-tests
+  ERROR: Tests failed with exit code 1  ← Highlighted in red
+  === RUN   TestHandler
+  --- FAIL: TestHandler (0.00s)         ← Highlighted in red
+      handler_test.go:42: Expected status code 200, got 500
+  FAIL                                   ← Highlighted in red
+```
+
+## Kubernetes Events
+
+With `--show-events`, see cluster-level events:
+
+### Event Types
+
+- **Normal** - Standard operations (Started, Running, Succeeded)
+- **Warning** - Issues or failures
+
+### Event Sources
+
+- `tekton-controller` - Tekton Pipeline controller
+- `pipelinesascode-controller` - PAC controller
+- `kubelet` - Kubernetes node agent
+
+### Common Events
+
+| Reason | Description |
+|--------|-------------|
+| **Started** | PipelineRun execution started |
+| **Running** | Tasks are executing |
+| **Succeeded** | PipelineRun completed successfully |
+| **Failed** | PipelineRun failed |
+| **PodScheduled** | Pod scheduled on node |
+| **Pulling** | Pulling container image |
+| **Pulled** | Image pulled successfully |
+
+### Event Limit
+
+Shows up to 50 most recent events to avoid overwhelming output.
+
+## Time Formats
+
+### Relative Time (Default)
+
+```
+STARTED       DURATION
+2 hours ago   5m 23s
+30 mins ago   2m 15s
+1 day ago     3m 45s
+```
+
+### RFC3339 Format (--use-realtime)
+
+```
+STARTED                    DURATION
+2024-03-15T14:30:00Z      5m 23s
+2024-03-15T16:45:00Z      2m 15s
+2024-03-14T09:15:00Z      3m 45s
+```
+
+## Common Workflows
+
+### Debug Failed Pipeline
+
+```bash
+# See failure details
+tkn pac describe myorg-app
+
+# Include cluster events
+tkn pac describe myorg-app --show-events
+
+# View full logs
+tkn pac logs myorg-app
+```
+
+### Check Specific Run
+
+```bash
+# Describe specific PipelineRun
+tkn pac describe myorg-app -t myorg-app-pr-123
+
+# View its logs
+tkn pac logs myorg-app
+# Select myorg-app-pr-123 from list
+```
+
+### Monitor Repository Activity
+
+```bash
+# Check all recent runs
+tkn pac describe myorg-app
+
+# With timestamps
+tkn pac describe myorg-app --use-realtime
+```
+
+### Compare Runs Across Repositories
+
+```bash
+# Check multiple repositories
+tkn pac describe api-repo
+tkn pac describe frontend-repo  
+tkn pac describe docs-repo
+```
+
+## Troubleshooting
+
+### Repository Not Found
+
+```
+Error: repositories.pipelinesascode.tekton.dev "myorg-app" not found
+```
+
+**Solutions:**
+- List repositories: `tkn pac list`
+- Check namespace: `tkn pac list -A`
+- Verify spelling
+
+### No PipelineRuns
+
+If repository has no runs:
+
+```bash
+Repository: myorg-app
+Namespace:  production
+URL:        https://github.com/myorg/app
+
+PipelineRuns:
+(none)
+```
+
+**Solutions:**
+- Trigger a run by creating a PR or pushing code
+- Check webhook configuration: `tkn pac webhook add`
+- Verify `.tekton/` directory exists in repository
+
+### Target PipelineRun Not Found
+
+```
+Error: cannot find target pipelinerun myorg-app-pr-999
+```
+
+**Solutions:**
+- List available runs: `tkn pac describe myorg-app`
+- Check PipelineRun name: `kubectl get pr`
+- Verify it belongs to this repository
+
+### Events Not Showing
+
+```bash
+# No events visible
+tkn pac describe myorg-app --show-events
+```
+
+**Possible causes:**
+- Events expired (usually kept for 1 hour)
+- No recent activity
+- Insufficient RBAC permissions to view events
+
+### Permission Denied
+
+```
+Error: repositories.pipelinesascode.tekton.dev is forbidden
+```
+
+Solution: Request RBAC permissions to view repositories and PipelineRuns.
+
+## Environment Variables
+
+<ParamField path="TEKTON_DASHBOARD_URL" type="string">
+  Tekton Dashboard URL for clickable links
+  
+  Example:
+  ```bash
+  export TEKTON_DASHBOARD_URL=https://dashboard.example.com
+  tkn pac describe myorg-app
+  ```
+</ParamField>
+
+## Related Commands
+
+- [`tkn pac list`](/cli/repository#list) - List all repositories
+- [`tkn pac logs`](/cli/logs) - View full PipelineRun logs
+- [`tkn pr describe`](https://github.com/tektoncd/cli) - Tekton CLI for PipelineRun details
+
+## See Also
+
+- [Repository CRD Reference](/docs/guide/repositorycrd)
+- [PipelineRun Status](/docs/guide/statuses)
+- [Debugging Pipelines](/docs/guide/debugging)

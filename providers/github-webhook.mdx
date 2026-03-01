@@ -1,0 +1,272 @@
+---
+title: GitHub Webhook Setup
+description: Configure Pipelines as Code with GitHub webhooks when GitHub Apps are not available
+---
+
+# GitHub Webhook Setup
+
+If you cannot create a GitHub App, you can use Pipelines as Code with GitHub webhooks on your repository. This method uses personal access tokens instead of GitHub App authentication.
+
+## Limitations
+
+<Warning>
+GitHub webhook mode has several limitations compared to GitHub Apps:
+
+- **No Checks API**: Pipeline status appears as PR comments instead of in the Checks tab
+- **No GitOps commands**: `/retest` and `/ok-to-test` commands are not supported
+- **Restart requires new commit**: To restart CI, you must create a new commit
+</Warning>
+
+To quickly restart CI without a meaningful change:
+```bash
+git commit --amend -a --no-edit && git push --force-with-lease origin branchname
+```
+
+## Create GitHub Personal Access Token
+
+After installing Pipelines as Code, create a personal access token for GitHub API operations.
+
+### Fine-Grained Token (Recommended)
+
+Fine-grained tokens provide better security by limiting permissions to specific repositories.
+
+<Steps>
+  <Step title="Navigate to token settings">
+    Go to GitHub Settings > Developer settings > Personal access tokens > Fine-grained tokens
+    
+    Or use this direct link: https://github.com/settings/tokens?type=beta
+  </Step>
+  
+  <Step title="Create new token">
+    Click **Generate new token** and configure:
+    
+    - **Token name**: `pipelines-as-code-token`
+    - **Expiration**: 30 days (or your organization's policy)
+    - **Repository access**: Select specific repositories
+  </Step>
+  
+  <Step title="Set permissions">
+    Configure the following repository permissions:
+    
+    | Permission | Access |
+    |------------|--------|
+    | Administration | Read only |
+    | Metadata | Read only |
+    | Contents | Read only |
+    | Commit statuses | Read and Write |
+    | Pull requests | Read and Write |
+    | Webhooks | Read and Write |
+  </Step>
+  
+  <Step title="Generate and save token">
+    Click **Generate token** and save it securely. You won't be able to see it again.
+    
+    <Note>Set a calendar reminder before the token expires so you can rotate it.</Note>
+  </Step>
+</Steps>
+
+### Classic Token
+
+Classic tokens have broader permissions but are simpler to configure.
+
+<Steps>
+  <Step title="Navigate to token settings">
+    Go to https://github.com/settings/tokens/new?description=pipelines-as-code-token&scopes=repo
+  </Step>
+  
+  <Step title="Select scopes">
+    For **public repositories**:
+    - `public_repo`
+    
+    For **private repositories**:
+    - `repo` (entire scope)
+    
+    If using `tkn pac` CLI to configure webhook:
+    - Add `admin:repo_hook`
+  </Step>
+  
+  <Step title="Generate and save token">
+    Click **Generate token** and save it securely.
+  </Step>
+</Steps>
+
+## Create Repository and Configure Webhook
+
+There are two methods to create the Repository CRD and configure the webhook:
+
+### Automated Setup with tkn pac CLI
+
+<Steps>
+  <Step title="Run create repo command">
+    ```bash
+    tkn pac create repo
+    ```
+    
+    The CLI will prompt you for:
+    - Git repository URL
+    - Target namespace
+    - GitHub personal access token (with `admin:repo_hook` scope)
+    - Webhook secret
+  </Step>
+  
+  <Step title="Follow the prompts">
+    Example session:
+    
+    ```bash
+    $ tkn pac create repo
+    
+    ? Enter the Git repository url (default: https://github.com/owner/repo):
+    ? Please enter the namespace where the pipeline should run (default: repo-pipelines):
+    ! Namespace repo-pipelines is not found
+    ? Would you like me to create the namespace repo-pipelines? Yes
+    ✓ Repository owner-repo has been created in repo-pipelines namespace
+    ✓ Setting up GitHub Webhook for Repository https://github.com/owner/repo
+    👀 I have detected a controller url: https://controller.example.com
+    ? Do you want me to use it? Yes
+    ? Please enter the secret to configure the webhook for payload validation (default: sJNwdmTifHTs): sJNwdmTifHTs
+    ? Please enter the GitHub access token: ****************************************
+    ✓ Webhook has been created on repository owner/repo
+    🔑 Webhook Secret owner-repo has been created in the repo-pipelines namespace.
+    ✓ We have detected your repository using the programming language Go.
+    ✓ A basic template has been created in .tekton/pipelinerun.yaml
+    ```
+  </Step>
+  
+  <Step title="Update token permissions">
+    After webhook configuration completes, you can update the token in the secret to remove the `admin:repo_hook` scope, keeping only the minimum required permissions.
+  </Step>
+</Steps>
+
+### Manual Setup
+
+<Steps>
+  <Step title="Get the controller URL">
+    On OpenShift:
+    ```bash
+    echo https://$(oc get route -n pipelines-as-code pipelines-as-code-controller -o jsonpath='{.spec.host}')
+    ```
+  </Step>
+  
+  <Step title="Create webhook in GitHub">
+    1. Go to your repository **Settings** > **Webhooks**
+    2. Click **Add webhook**
+    3. Configure:
+       - **Payload URL**: Your Pipelines as Code controller URL
+       - **Content type**: `application/json`
+       - **Secret**: Generate with `head -c 30 /dev/random | base64`
+    4. Select individual events:
+       - Commit comments
+       - Issue comments
+       - Pull requests
+       - Pushes
+    5. Click **Add webhook**
+  </Step>
+  
+  <Step title="Create Kubernetes secret">
+    Create a secret with the personal token and webhook secret:
+    
+    ```bash
+    kubectl -n target-namespace create secret generic github-webhook-config \
+      --from-literal provider.token="TOKEN_AS_GENERATED_PREVIOUSLY" \
+      --from-literal webhook.secret="SECRET_AS_SET_IN_WEBHOOK_CONFIGURATION"
+    ```
+  </Step>
+  
+  <Step title="Create Repository CRD">
+    Create a Repository CRD referencing the secret:
+    
+    ```yaml
+    ---
+    apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+    kind: Repository
+    metadata:
+      name: my-repo
+      namespace: target-namespace
+    spec:
+      url: "https://github.com/owner/repo"
+      git_provider:
+        secret:
+          name: "github-webhook-config"
+          # Optionally specify a different key:
+          # key: "provider.token"
+        webhook_secret:
+          name: "github-webhook-config"
+          # Optionally specify a different key:
+          # key: "webhook.secret"
+    ```
+  </Step>
+</Steps>
+
+## Managing Webhooks
+
+### Add Webhook to Existing Repository
+
+If you need to add a webhook to an existing Repository:
+
+```bash
+tkn pac webhook add -n repo-pipelines
+```
+
+Example session:
+```bash
+$ tkn pac webhook add -n repo-pipelines
+
+✓ Setting up GitHub Webhook for Repository https://github.com/owner/repo
+👀 I have detected a controller url: https://controller.example.com
+? Do you want me to use it? Yes
+? Please enter the secret to configure the webhook for payload validation (default: AeHdHTJVfAeH): AeHdHTJVfAeH
+✓ Webhook has been created on repository owner/repo
+🔑 Secret owner-repo has been updated with webhook secret in the repo-pipelines namespace.
+```
+
+<Note>Use `-n namespace` flag if your Repository exists in a non-default namespace.</Note>
+
+### Update Personal Access Token
+
+When your token expires or needs rotation:
+
+#### Option 1: Using tkn pac CLI
+
+```bash
+tkn pac webhook update-token -n repo-pipelines
+```
+
+Example:
+```bash
+$ tkn pac webhook update-token -n repo-pipelines
+
+? Please enter your personal access token: ****************************************
+🔑 Secret owner-repo has been updated with new personal access token in the repo-pipelines namespace.
+```
+
+#### Option 2: Using kubectl
+
+Find the secret name in your Repository CRD:
+```yaml
+spec:
+  git_provider:
+    secret:
+      name: "github-webhook-config"
+```
+
+Update the secret:
+```bash
+kubectl -n $target_namespace patch secret github-webhook-config -p "{\"data\": {\"provider.token\": \"$(echo -n $NEW_TOKEN|base64 -w0)\"}}"
+```
+
+## Important Notes
+
+- Secrets must be in the same namespace as the Repository CRD
+- Set up token expiration reminders to avoid service disruption
+- For better security, use fine-grained tokens scoped to specific repositories
+- Consider using GitHub Apps instead if you need the full feature set
+
+## Next Steps
+
+After configuring GitHub webhook:
+
+1. Add `.tekton` directory with pipeline definitions to your repository
+2. Test by creating a pull request or pushing a commit
+3. Check pipeline status in PR comments
+
+See the [Repository CRD documentation](/docs/guide/repositorycrd) for advanced configuration options.

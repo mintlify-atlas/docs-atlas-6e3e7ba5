@@ -1,0 +1,393 @@
+---
+title: 'Settings Reference'
+description: 'Repository-level settings and configuration options'
+---
+
+The `settings` field in the Repository spec contains configuration settings for the repository, including authorization policies, provider-specific configuration, and provenance settings.
+
+## Settings Fields
+
+<ParamField path="pipelinerun_provenance" type="string">
+  Configures how PipelineRun definitions are fetched.
+
+  Options:
+  - `source` - Fetch definitions from the event source branch/SHA (default)
+  - `default_branch` - Fetch definitions from the repository default branch
+
+  ```yaml
+  settings:
+    pipelinerun_provenance: "source"
+  ```
+</ParamField>
+
+<ParamField path="github_app_token_scope_repos" type="[]string">
+  Lists repositories that can access the GitHub App token when using the GitHub App authentication method. This allows specific repositories to use tokens generated for the GitHub App installation, useful for cross-repository access.
+
+  ```yaml
+  settings:
+    github_app_token_scope_repos:
+      - "organization/shared-library"
+      - "organization/common-tasks"
+  ```
+</ParamField>
+
+<ParamField path="policy" type="Policy">
+  Defines authorization policies for the repository, controlling who can trigger PipelineRuns under different conditions.
+
+  <Expandable title="Policy Fields">
+    <ParamField path="policy.ok_to_test" type="[]string">
+      List of usernames that are allowed to trigger pipeline runs on pull requests from external contributors by commenting `/ok-to-test` on the PR. These users are typically repository maintainers or trusted contributors who can vouch for external contributions.
+
+      ```yaml
+      settings:
+        policy:
+          ok_to_test:
+            - "maintainer-username"
+            - "trusted-contributor"
+      ```
+    </ParamField>
+
+    <ParamField path="policy.pull_request" type="[]string">
+      List of usernames that are explicitly allowed to execute pipelines on their pull requests, even if they wouldn't normally have permission. This is useful for allowing specific external contributors to trigger pipeline runs.
+
+      ```yaml
+      settings:
+        policy:
+          pull_request:
+            - "external-contributor"
+            - "community-member"
+      ```
+    </ParamField>
+  </Expandable>
+
+  ```yaml
+  settings:
+    policy:
+      ok_to_test:
+        - "team-lead"
+        - "senior-dev"
+      pull_request:
+        - "trusted-external"
+  ```
+</ParamField>
+
+## Provider-Specific Settings
+
+### GitHub Settings
+
+<ParamField path="github" type="GithubSettings">
+  GitHub-specific settings for repositories hosted on GitHub.
+
+  <Expandable title="GitHub Settings Fields">
+    <ParamField path="github.comment_strategy" type="string">
+      Defines how GitHub comments are handled for pipeline results.
+
+      Options:
+      - `""` (empty) - Default behavior (create new comments)
+      - `disable_all` - Disables all comments on pull requests
+      - `update` - Updates a single comment per PipelineRun on every trigger
+
+      ```yaml
+      settings:
+        github:
+          comment_strategy: "update"
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### GitLab Settings
+
+<ParamField path="gitlab" type="GitlabSettings">
+  GitLab-specific settings for repositories hosted on GitLab.
+
+  <Expandable title="GitLab Settings Fields">
+    <ParamField path="gitlab.comment_strategy" type="string">
+      Defines how GitLab comments are handled for pipeline results.
+
+      Options:
+      - `""` (empty) - Default behavior (create new comments)
+      - `disable_all` - Disables all comments on merge requests
+      - `update` - Updates a single comment per PipelineRun on every trigger
+
+      ```yaml
+      settings:
+        gitlab:
+          comment_strategy: "update"
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Forgejo/Gitea Settings
+
+<ParamField path="forgejo" type="ForgejoSettings">
+  Forgejo/Gitea-specific settings for repositories hosted on Forgejo or Gitea.
+
+  <Expandable title="Forgejo Settings Fields">
+    <ParamField path="forgejo.user_agent" type="string">
+      Sets the User-Agent header on API requests to the Gitea/Forgejo instance. This is useful when the instance is behind an AI scraping protection proxy (e.g., Anubis) that blocks requests without a recognized User-Agent.
+
+      Defaults to `pipelines-as-code/<version>` when left empty.
+
+      ```yaml
+      settings:
+        forgejo:
+          user_agent: "MyCustomBot/1.0"
+      ```
+    </ParamField>
+
+    <ParamField path="forgejo.comment_strategy" type="string">
+      Defines how Forgejo/Gitea comments are handled for pipeline results.
+
+      Options:
+      - `""` (empty) - Default behavior (create new comments)
+      - `disable_all` - Disables all comments on pull requests
+      - `update` - Updates a single comment per PipelineRun on every trigger
+
+      ```yaml
+      settings:
+        forgejo:
+          comment_strategy: "update"
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## AI Analysis Settings
+
+<ParamField path="ai" type="AIAnalysisConfig">
+  AI/LLM analysis configuration for automated CI/CD pipeline analysis.
+
+  <Expandable title="AIAnalysisConfig Fields">
+    <ParamField path="ai.enabled" type="boolean" required>
+      Controls whether AI analysis is active for this repository.
+
+      ```yaml
+      settings:
+        ai:
+          enabled: true
+      ```
+    </ParamField>
+
+    <ParamField path="ai.provider" type="string" required>
+      Specifies which LLM provider to use for analysis.
+
+      Supported values:
+      - `openai` - OpenAI (GPT models)
+      - `gemini` - Google Gemini
+
+      ```yaml
+      settings:
+        ai:
+          provider: "openai"
+      ```
+    </ParamField>
+
+    <ParamField path="ai.api_url" type="string">
+      Optional base URL to override the default API endpoint of the LLM provider.
+
+      Default values:
+      - OpenAI: `https://api.openai.com/v1`
+      - Gemini: `https://generativelanguage.googleapis.com/v1beta`
+
+      Use this to configure self-hosted LLM instances, proxy services, or alternative endpoints.
+
+      ```yaml
+      settings:
+        ai:
+          api_url: "https://custom-llm.example.com/v1"
+      ```
+    </ParamField>
+
+    <ParamField path="ai.secret_ref" type="Secret" required>
+      References the Kubernetes secret containing the LLM provider API token.
+
+      ```yaml
+      settings:
+        ai:
+          secret_ref:
+            name: openai-token
+            key: api-key
+      ```
+    </ParamField>
+
+    <ParamField path="ai.timeout_seconds" type="integer">
+      Maximum time to wait for LLM analysis (default: 30).
+
+      Valid range: 1-300 seconds
+
+      ```yaml
+      settings:
+        ai:
+          timeout_seconds: 60
+      ```
+    </ParamField>
+
+    <ParamField path="ai.max_tokens" type="integer">
+      Limits the response length from the LLM (default: 1000).
+
+      Valid range: 1-4000 tokens
+
+      ```yaml
+      settings:
+        ai:
+          max_tokens: 2000
+      ```
+    </ParamField>
+
+    <ParamField path="ai.roles" type="[]AnalysisRole" required>
+      Defines different analysis scenarios and their configurations. At least one role is required.
+
+      <Expandable title="AnalysisRole Fields">
+        <ParamField path="roles[].name" type="string" required>
+          Unique identifier for this analysis role.
+        </ParamField>
+
+        <ParamField path="roles[].prompt" type="string" required>
+          Base prompt template sent to the LLM for analysis.
+        </ParamField>
+
+        <ParamField path="roles[].model" type="string">
+          Specific LLM model to use for this role. If not specified, provider-specific defaults are used:
+          - OpenAI: `gpt-5-mini`
+          - Gemini: `gemini-2.5-flash-lite`
+        </ParamField>
+
+        <ParamField path="roles[].on_cel" type="string">
+          CEL expression that determines when this role should be triggered.
+        </ParamField>
+
+        <ParamField path="roles[].output" type="string">
+          Where the analysis results should be sent. Currently only `pr-comment` is supported (default).
+        </ParamField>
+
+        <ParamField path="roles[].context_items" type="ContextConfig">
+          Defines what context data to include in the analysis.
+
+          <Expandable title="ContextConfig Fields">
+            <ParamField path="context_items.commit_content" type="boolean">
+              Include commit message and diff information.
+            </ParamField>
+
+            <ParamField path="context_items.pr_content" type="boolean">
+              Include pull request title, description, and metadata.
+            </ParamField>
+
+            <ParamField path="context_items.error_content" type="boolean">
+              Include error messages and failure summaries.
+            </ParamField>
+
+            <ParamField path="context_items.container_logs" type="ContainerLogsConfig">
+              Configures inclusion of container/task logs.
+
+              <Expandable title="ContainerLogsConfig Fields">
+                <ParamField path="container_logs.enabled" type="boolean">
+                  Controls whether container logs are included.
+                </ParamField>
+
+                <ParamField path="container_logs.max_lines" type="integer">
+                  Limits the number of log lines to include (default: 50).
+                  Valid range: 1-1000 lines
+                </ParamField>
+              </Expandable>
+            </ParamField>
+          </Expandable>
+        </ParamField>
+      </Expandable>
+
+      ```yaml
+      settings:
+        ai:
+          roles:
+            - name: "failure-analysis"
+              prompt: "Analyze the following CI/CD failure and suggest fixes"
+              model: "gpt-4"
+              on_cel: "event_type == 'pull_request' && status == 'failed'"
+              context_items:
+                commit_content: true
+                error_content: true
+                container_logs:
+                  enabled: true
+                  max_lines: 100
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Complete Example
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: example-repo
+  namespace: pipelines-as-code
+spec:
+  url: "https://github.com/organization/repository"
+  settings:
+    # Provenance configuration
+    pipelinerun_provenance: "source"
+    
+    # GitHub App token scoping
+    github_app_token_scope_repos:
+      - "organization/shared-tasks"
+      - "organization/common-library"
+    
+    # Authorization policies
+    policy:
+      ok_to_test:
+        - "team-lead"
+        - "senior-engineer"
+        - "trusted-maintainer"
+      pull_request:
+        - "approved-contributor"
+    
+    # GitHub-specific settings
+    github:
+      comment_strategy: "update"
+    
+    # AI analysis configuration
+    ai:
+      enabled: true
+      provider: "openai"
+      api_url: "https://api.openai.com/v1"
+      secret_ref:
+        name: openai-credentials
+        key: api-key
+      timeout_seconds: 45
+      max_tokens: 1500
+      roles:
+        - name: "pr-failure-analysis"
+          prompt: |
+            You are a CI/CD expert. Analyze the following pipeline failure and provide:
+            1. Root cause analysis
+            2. Specific fix recommendations
+            3. Prevention strategies
+          model: "gpt-4"
+          on_cel: 'event_type == "pull_request" && status == "failed"'
+          output: "pr-comment"
+          context_items:
+            commit_content: true
+            pr_content: true
+            error_content: true
+            container_logs:
+              enabled: true
+              max_lines: 100
+        - name: "security-review"
+          prompt: "Review this change for potential security issues"
+          model: "gpt-4"
+          on_cel: 'event_type == "pull_request" && has_label("security-review")'
+          context_items:
+            commit_content: true
+            pr_content: true
+```
+
+## Settings Inheritance
+
+Settings can be defined at both the global level (in the ConfigMap) and the repository level (in the Repository CR). Repository-level settings override global settings when both are present.
+
+## Related Resources
+
+- [Repository Spec](/api/repository-spec) - Complete Repository specification
+- [ConfigMap Reference](/api/configmap) - Global configuration settings

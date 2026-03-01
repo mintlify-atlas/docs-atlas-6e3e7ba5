@@ -1,0 +1,486 @@
+---
+title: Installing on OpenShift
+description: Install Pipelines as Code on OpenShift using the Red Hat OpenShift Pipelines Operator or manual installation
+---
+
+# Installing on OpenShift
+
+This guide covers installing Pipelines as Code on OpenShift clusters using the Red Hat OpenShift Pipelines Operator or manual installation methods.
+
+## Prerequisites
+
+Before installing Pipelines as Code on OpenShift:
+
+- **OpenShift cluster**: Version 4.10 or higher
+- **Cluster admin access**: Required for operator installation or manual installation
+- **oc CLI**: OpenShift command-line tool configured for your cluster
+
+## Method 1: Operator Installation (Recommended)
+
+The Red Hat OpenShift Pipelines Operator is the easiest and recommended way to install Pipelines as Code on OpenShift.
+
+### Install the Operator
+
+<Steps>
+  <Step title="Access the OpenShift Web Console">
+    Log in to your OpenShift cluster's web console as a cluster administrator.
+  </Step>
+  
+  <Step title="Navigate to OperatorHub">
+    - Click on **Operators** → **OperatorHub** in the left navigation menu
+    - Search for "Red Hat OpenShift Pipelines"
+  </Step>
+  
+  <Step title="Install the operator">
+    - Click on the **Red Hat OpenShift Pipelines** tile
+    - Click **Install**
+    - Accept the default installation settings
+    - Click **Install** again to confirm
+  </Step>
+  
+  <Step title="Wait for installation">
+    The operator will automatically install:
+    - Tekton Pipelines
+    - Tekton Triggers
+    - Pipelines as Code
+    - Other OpenShift Pipelines components
+    
+    Wait for the operator status to show "Succeeded".
+  </Step>
+</Steps>
+
+### Verify Operator Installation
+
+Check that Pipelines as Code is running:
+
+```bash
+oc get pods -n openshift-pipelines | grep pipelines-as-code
+```
+
+Expected output:
+```
+pipelines-as-code-controller-xxxxxxxxxx-xxxxx   1/1     Running   0          2m
+pipelines-as-code-watcher-xxxxxxxxxx-xxxxx      1/1     Running   0          2m
+pipelines-as-code-webhook-xxxxxxxxxx-xxxxx      1/1     Running   0          2m
+```
+
+<Note>
+  When installed via the OpenShift Pipelines Operator, the default namespace is `openshift-pipelines` (not `pipelines-as-code`).
+</Note>
+
+### Configure Pipelines as Code via TektonConfig
+
+When Pipelines as Code is installed through the Tekton Operator, configuration is managed through the `TektonConfig` custom resource.
+
+<Warning>
+  Direct changes to the `pipelines-as-code` ConfigMap or `OpenShiftPipelinesAsCode` custom resource will be reverted by the operator. Always configure through TektonConfig.
+</Warning>
+
+View the current configuration:
+
+```bash
+oc get tektonconfig config -o yaml
+```
+
+The default Pipelines as Code configuration looks like:
+
+```yaml
+apiVersion: operator.tekton.dev/v1alpha1
+kind: TektonConfig
+metadata:
+  name: config
+spec:
+  platforms:
+    openshift:
+      pipelinesAsCode:
+        enable: true
+        settings:
+          application-name: Pipelines-as-Code CI
+          auto-configure-new-github-repo: "false"
+          bitbucket-cloud-check-source-ip: "true"
+          enable-cancel-in-progress-on-pull-requests: "false"
+          enable-cancel-in-progress-on-push: "false"
+          error-detection-from-container-logs: "false"
+          error-detection-max-number-of-lines: "50"
+          error-detection-simple-regexp: '^(?P<filename>[^:]*):(?P<line>[0-9]+):(?P<column>[0-9]+):([ ]*)?(?P<error>.*)'
+          error-log-snippet: "true"
+          hub-catalog-type: artifacthub
+          hub-url: https://artifacthub.io
+          remember-ok-to-test: "true"
+          remote-tasks: "true"
+          secret-auto-create: "true"
+          secret-github-app-token-scoped: "true"
+          skip-push-event-for-pr-commits: "true"
+```
+
+### Update Configuration
+
+To modify Pipelines as Code settings, edit the TektonConfig:
+
+```bash
+oc edit tektonconfig config
+```
+
+Or patch specific settings:
+
+```bash
+oc patch tektonconfig config --type merge -p '{
+  "spec": {
+    "platforms": {
+      "openshift": {
+        "pipelinesAsCode": {
+          "settings": {
+            "application-name": "My Custom CI"
+          }
+        }
+      }
+    }
+  }
+}'
+```
+
+The operator will automatically update the ConfigMap.
+
+### Disable Pipelines as Code
+
+If you need to disable Pipelines as Code while keeping the operator:
+
+```bash
+oc patch tektonconfig config --type merge -p '{
+  "spec": {
+    "platforms": {
+      "openshift": {
+        "pipelinesAsCode": {
+          "enable": false
+        }
+      }
+    }
+  }
+}'
+```
+
+## Method 2: Manual Installation
+
+For advanced use cases or when you need more control, you can manually install Pipelines as Code.
+
+### Prerequisites for Manual Installation
+
+Ensure Tekton Pipelines is installed (usually included with OpenShift Pipelines):
+
+```bash
+oc get pods -n openshift-pipelines
+```
+
+### Disable Operator-Managed Installation
+
+If you have the OpenShift Pipelines Operator installed, disable its Pipelines as Code management:
+
+```bash
+oc patch tektonconfig config --type="merge" -p '{
+  "spec": {
+    "platforms": {
+      "openshift": {
+        "pipelinesAsCode": {
+          "enable": false
+        }
+      }
+    }
+  }
+}'
+```
+
+### Install Pipelines as Code
+
+<Steps>
+  <Step title="Apply the release manifest">
+    Install the stable release:
+    
+    ```bash
+    oc apply -f https://raw.githubusercontent.com/openshift-pipelines/pipelines-as-code/stable/release.yaml
+    ```
+    
+    This creates:
+    - The `pipelines-as-code` namespace
+    - Custom Resource Definitions (CRDs)
+    - RBAC roles and bindings
+    - Controller, webhook, and watcher deployments
+    - OpenShift Route for the controller
+    - Required ConfigMaps and Secrets
+  </Step>
+  
+  <Step title="Verify the installation">
+    Check all components are running:
+    
+    ```bash
+    oc get deployment -n pipelines-as-code
+    ```
+    
+    Expected output:
+    ```
+    NAME                           READY   UP-TO-DATE   AVAILABLE   AGE
+    pipelines-as-code-controller   1/1     1            1           1m
+    pipelines-as-code-watcher      1/1     1            1           1m
+    pipelines-as-code-webhook      1/1     1            1           1m
+    ```
+  </Step>
+  
+  <Step title="Check pod status">
+    ```bash
+    oc get pods -n pipelines-as-code
+    ```
+    
+    All pods should be in `Running` status.
+  </Step>
+</Steps>
+
+<Note>
+  For the latest development version, use:
+  ```bash
+  oc apply -f https://raw.githubusercontent.com/openshift-pipelines/pipelines-as-code/nightly/release.yaml
+  ```
+</Note>
+
+## OpenShift Route
+
+OpenShift automatically creates a Route for the Pipelines as Code controller, making it accessible from the internet.
+
+### Get the Route URL
+
+Retrieve the controller's public URL:
+
+```bash
+echo https://$(oc get route -n pipelines-as-code pipelines-as-code-controller -o jsonpath='{.spec.host}')
+```
+
+Example output:
+```
+https://pipelines-as-code-controller-pipelines-as-code.apps.cluster.example.com
+```
+
+You'll use this URL when configuring webhooks in your Git provider.
+
+### Route Configuration
+
+The automatically created Route includes:
+- **TLS termination**: Edge termination with redirect from HTTP to HTTPS
+- **Timeout**: 600 seconds for long-running webhook operations
+- **Target port**: `http-listener` (port 8080)
+
+View the Route configuration:
+
+```bash
+oc get route pipelines-as-code-controller -n pipelines-as-code -o yaml
+```
+
+## Configure RBAC for Users
+
+Non-admin users need explicit permissions to create Repository CRDs in their namespaces.
+
+### Grant Repository CR Permissions
+
+Using the `oc` CLI:
+
+```bash
+oc adm policy add-role-to-user openshift-pipeline-as-code-clusterrole username -n target-namespace
+```
+
+Or apply this RoleBinding:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pac-repo-admin
+  namespace: target-namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openshift-pipeline-as-code-clusterrole
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: User
+  name: username
+```
+
+Apply the RoleBinding:
+
+```bash
+oc apply -f rolebinding.yaml
+```
+
+### Grant to a Group
+
+To grant permissions to all users in a group:
+
+```bash
+oc adm policy add-role-to-group openshift-pipeline-as-code-clusterrole developers -n target-namespace
+```
+
+## Optional Configurations
+
+### Configure TLS Certificates
+
+By default, OpenShift Routes handle TLS termination. To configure TLS directly on the controller:
+
+<Steps>
+  <Step title="Create a TLS secret">
+    ```bash
+    oc create secret generic pipelines-as-code-tls-secret \
+      -n pipelines-as-code \
+      --from-file=cert=/path/to/tls.crt \
+      --from-file=key=/path/to/tls.key
+    ```
+  </Step>
+  
+  <Step title="Restart the controller">
+    ```bash
+    oc rollout restart deployment/pipelines-as-code-controller -n pipelines-as-code
+    ```
+  </Step>
+</Steps>
+
+### Integrate with OpenShift Console
+
+Pipelines as Code automatically integrates with the OpenShift Console. When installed on OpenShift, logs and PipelineRun details will link to the OpenShift Console.
+
+To verify the integration:
+
+```bash
+oc get configmap pipelines-as-code -n pipelines-as-code -o yaml | grep console
+```
+
+### Configure Monitoring
+
+OpenShift automatically enables monitoring for Pipelines as Code. The namespace includes the label:
+
+```yaml
+openshift.io/cluster-monitoring: "true"
+```
+
+View metrics:
+
+```bash
+oc get servicemonitor -n pipelines-as-code
+```
+
+## Verification
+
+Verify your installation:
+
+<Steps>
+  <Step title="Check all deployments">
+    ```bash
+    oc get deployment -n pipelines-as-code
+    ```
+    
+    Or for operator installation:
+    ```bash
+    oc get deployment -n openshift-pipelines | grep pipelines-as-code
+    ```
+  </Step>
+  
+  <Step title="Verify the Route">
+    ```bash
+    oc get route -n pipelines-as-code
+    ```
+    
+    Ensure the Route exists and has a HOST/PORT value.
+  </Step>
+  
+  <Step title="Test the controller endpoint">
+    ```bash
+    curl -k $(oc get route -n pipelines-as-code pipelines-as-code-controller -o jsonpath='{.spec.host}')
+    ```
+    
+    Should return a response (even if it's an error about missing payload).
+  </Step>
+  
+  <Step title="Check CRDs">
+    ```bash
+    oc get crd repositories.pipelinesascode.tekton.dev
+    ```
+  </Step>
+</Steps>
+
+## Upgrading
+
+### Operator-Based Installation
+
+Upgrades are handled automatically by the operator. To upgrade to a new operator version:
+
+1. Navigate to **Operators** → **Installed Operators**
+2. Find **Red Hat OpenShift Pipelines**
+3. Follow the upgrade prompts if available
+
+### Manual Installation
+
+To upgrade a manual installation:
+
+```bash
+oc apply -f https://raw.githubusercontent.com/openshift-pipelines/pipelines-as-code/stable/release.yaml
+```
+
+## Troubleshooting
+
+### Operator Not Installing Pipelines as Code
+
+Check the TektonConfig:
+
+```bash
+oc get tektonconfig config -o jsonpath='{.spec.platforms.openshift.pipelinesAsCode.enable}'
+```
+
+Should return `true`.
+
+### Route Not Created
+
+If using manual installation, check if the Route exists:
+
+```bash
+oc get route -n pipelines-as-code
+```
+
+If missing, verify the release.yaml includes OpenShift-specific resources.
+
+### Configuration Changes Not Applied
+
+For operator installations, ensure you're editing TektonConfig, not the ConfigMap directly:
+
+```bash
+oc edit tektonconfig config
+```
+
+### View Controller Logs
+
+```bash
+oc logs -n pipelines-as-code -l app.kubernetes.io/component=controller --tail=100
+```
+
+## Next Steps
+
+After installing Pipelines as Code on OpenShift:
+
+1. **Configure a Git Provider**: Set up GitHub App, GitLab, or other Git provider integration
+2. **Create a Repository CR**: Connect your Git repository to Pipelines as Code
+3. **Define Pipelines**: Add pipeline definitions in the `.tekton/` directory
+4. **Test the Setup**: Create a pull request to trigger your first pipeline
+
+## Uninstalling
+
+### Operator Installation
+
+To uninstall:
+
+1. Navigate to **Operators** → **Installed Operators**
+2. Find **Red Hat OpenShift Pipelines**
+3. Click the menu (⋮) and select **Uninstall Operator**
+
+### Manual Installation
+
+```bash
+oc delete -f https://raw.githubusercontent.com/openshift-pipelines/pipelines-as-code/stable/release.yaml
+```
+
+<Warning>
+  Uninstalling will delete all Repository CRs and associated resources. Back up important configurations before uninstalling.
+</Warning>

@@ -1,0 +1,358 @@
+---
+title: tkn pac version
+description: Display the version of tkn-pac CLI
+---
+
+# tkn pac version
+
+Display the version information for the tkn-pac CLI.
+
+## Synopsis
+
+```bash
+tkn pac version
+```
+
+## Description
+
+The `version` command displays the version of the `tkn-pac` CLI you have installed. This is useful for:
+
+- Verifying installation
+- Checking if updates are available
+- Reporting issues (version info is helpful for troubleshooting)
+- Ensuring compatibility with your Pipelines-as-Code installation
+
+## Usage Examples
+
+<CodeGroup>
+
+```bash Standard
+# Display version
+tkn pac version
+```
+
+```bash As Plugin
+# Works identically as tkn plugin
+tkn-pac version
+```
+
+</CodeGroup>
+
+## Output Example
+
+```bash
+$ tkn pac version
+
+Pipelines-as-Code version: v0.25.0
+```
+
+For development/nightly builds:
+
+```bash
+$ tkn pac version
+
+Pipelines-as-Code version: v0.25.0-dev+abc123.20240315
+```
+
+## Version Format
+
+### Stable Releases
+
+Format: `vMAJOR.MINOR.PATCH`
+
+```
+v0.25.0
+ │  │  └─ Patch version (bug fixes)
+ │  └─── Minor version (features)
+ └───── Major version (breaking changes)
+```
+
+### Development Builds
+
+Format: `vMAJOR.MINOR.PATCH-dev+COMMIT.DATE`
+
+```
+v0.25.0-dev+abc123.20240315
+            │      └─ Build date (YYYYMMDD)
+            └────── Commit SHA (first 6 chars)
+```
+
+## Checking for Updates
+
+To see if a newer version is available:
+
+1. **Check your version:**
+   ```bash
+   tkn pac version
+   ```
+
+2. **Visit releases page:**
+   ```bash
+   open https://github.com/openshift-pipelines/pipelines-as-code/releases/latest
+   ```
+
+3. **Compare versions:**
+   - Your version: `v0.24.0`
+   - Latest release: `v0.25.0`
+   - Update available!
+
+## Version Compatibility
+
+Ensure your CLI version is compatible with:
+
+### Pipelines-as-Code Controller
+
+| CLI Version | Controller Version | Compatible |
+|-------------|-------------------|------------|
+| v0.25.x | v0.25.x | ✅ Yes |
+| v0.25.x | v0.24.x | ✅ Yes (usually) |
+| v0.25.x | v0.23.x | ⚠️ Maybe |
+| v0.25.x | v0.20.x | ❌ No |
+
+<Note>
+  Best practice: Keep CLI and controller versions in sync or within 1-2 minor versions.
+</Note>
+
+### Tekton Pipelines
+
+| PAC Version | Tekton Version | Status |
+|-------------|----------------|--------|
+| v0.25.x | v0.50.x+ | ✅ Recommended |
+| v0.25.x | v0.47.x+ | ✅ Supported |
+| v0.25.x | v0.44.x+ | ⚠️ Limited support |
+| v0.25.x | < v0.44.x | ❌ Not supported |
+
+### Kubernetes
+
+| PAC Version | Kubernetes Version |
+|-------------|-------------------|
+| v0.25.x | 1.27+ (recommended) |
+| v0.25.x | 1.24+ (supported) |
+| v0.25.x | 1.21+ (limited) |
+
+## Common Use Cases
+
+### Bug Reports
+
+When reporting issues, always include version info:
+
+```bash
+# Get version
+tkn pac version
+
+# Include in bug report
+```
+
+**Example bug report:**
+
+```markdown
+## Environment
+
+- tkn-pac version: v0.25.0
+- Kubernetes version: 1.28
+- Tekton Pipelines: v0.53.0
+- Platform: Linux x86_64
+
+## Issue Description
+...
+```
+
+### Version Verification After Install
+
+```bash
+# Install
+brew install openshift-pipelines/pipelines-as-code/tektoncd-pac
+
+# Verify
+tkn pac version
+# Expected: Latest stable release
+```
+
+### Version Verification After Upgrade
+
+```bash
+# Before upgrade
+tkn pac version
+# v0.24.0
+
+# Upgrade
+brew upgrade openshift-pipelines/pipelines-as-code/tektoncd-pac
+
+# After upgrade
+tkn pac version
+# v0.25.0
+```
+
+### CI/CD Pipelines
+
+```yaml .github/workflows/pipeline.yaml
+steps:
+- name: Install tkn-pac
+  run: |
+    brew install openshift-pipelines/pipelines-as-code/tektoncd-pac
+    
+- name: Verify installation
+  run: |
+    tkn pac version
+    
+- name: Run pipeline
+  run: |
+    tkn pac resolve -f .tekton/pr.yaml | kubectl apply -f -
+```
+
+## Troubleshooting
+
+### Command Not Found
+
+```bash
+$ tkn pac version
+command not found: tkn
+```
+
+**Solution:**
+
+1. Verify installation:
+   ```bash
+   which tkn-pac
+   ```
+
+2. Check PATH:
+   ```bash
+   echo $PATH
+   ```
+
+3. Reinstall if needed:
+   ```bash
+   brew install openshift-pipelines/pipelines-as-code/tektoncd-pac
+   ```
+
+### Old Version Showing
+
+```bash
+$ tkn pac version
+Pipelines-as-Code version: v0.20.0  # Expected v0.25.0
+```
+
+**Solution:**
+
+1. Check for multiple installations:
+   ```bash
+   which -a tkn-pac
+   # /usr/local/bin/tkn-pac
+   # /opt/homebrew/bin/tkn-pac
+   ```
+
+2. Remove old version:
+   ```bash
+   sudo rm /usr/local/bin/tkn-pac
+   ```
+
+3. Verify again:
+   ```bash
+   tkn pac version
+   ```
+
+### Development Version in Production
+
+```bash
+$ tkn pac version
+Pipelines-as-Code version: v0.25.0-dev+abc123.20240315
+```
+
+This is a **development build**. For production use:
+
+1. Uninstall dev version
+2. Install stable release:
+   ```bash
+   brew install openshift-pipelines/pipelines-as-code/tektoncd-pac
+   ```
+
+### Mismatch with Controller
+
+If CLI and controller versions differ significantly:
+
+```bash
+# Check controller version
+kubectl get configmap pipelines-as-code-info \
+  -n pipelines-as-code \
+  -o jsonpath='{.data.version}'
+
+# Output: v0.25.0
+```
+
+**If versions don't match:**
+
+- Update CLI to match controller
+- Or update controller to match CLI
+
+## Related Information
+
+### Release Notes
+
+View what's new in each version:
+
+```bash
+# Visit releases page
+open https://github.com/openshift-pipelines/pipelines-as-code/releases
+```
+
+### Changelog
+
+Detailed changes:
+
+```bash
+open https://github.com/openshift-pipelines/pipelines-as-code/blob/main/CHANGELOG.md
+```
+
+### Latest Stable Release
+
+```bash
+open https://github.com/openshift-pipelines/pipelines-as-code/releases/latest
+```
+
+## Flags
+
+<Note>
+  The `version` command accepts no flags. It simply displays the version and exits.
+</Note>
+
+## Exit Codes
+
+| Code | Meaning |
+|------|----------|
+| `0` | Success - version displayed |
+| `1` | Error - command failed |
+
+## Version Information in Other Commands
+
+Some commands include version checks:
+
+```bash
+# Bootstrap checks compatibility
+tkn pac bootstrap
+# => Checking versions...
+# => CLI: v0.25.0
+# => Controller: v0.25.0
+# ✓ Versions compatible
+```
+
+## See Also
+
+- [Installation Guide](/cli/installation) - Install or upgrade tkn-pac
+- [Release Notes](https://github.com/openshift-pipelines/pipelines-as-code/releases) - What's new
+- [Changelog](https://github.com/openshift-pipelines/pipelines-as-code/blob/main/CHANGELOG.md) - Detailed changes
+
+---
+
+**Quick Reference:**
+
+```bash
+# Show version
+tkn pac version
+
+# Update to latest
+brew upgrade openshift-pipelines/pipelines-as-code/tektoncd-pac
+
+# Verify update
+tkn pac version
+```

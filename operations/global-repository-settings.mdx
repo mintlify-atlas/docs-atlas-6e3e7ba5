@@ -1,0 +1,338 @@
+---
+title: Global Repository Settings
+description: Configure default settings for all repositories using global Repository CR
+---
+
+<Note>
+  Global repository settings is a **Technology Preview** feature.
+</Note>
+
+Pipelines as Code supports global repository settings that apply to all repositories on your cluster. This enables you to define default configurations that serve as fallbacks when individual repositories don't override them.
+
+## Overview
+
+Global repository settings allow you to:
+
+- Define default configurations for all repositories
+- Set organization-wide policies and limits
+- Configure shared Git provider authentication
+- Establish custom parameters available to all repositories
+
+Local repository settings in individual namespaces always take precedence over global settings.
+
+## Creating a Global Repository
+
+The global repository must be created in the namespace where the Pipelines as Code controller is installed (typically `pipelines-as-code` or `openshift-pipelines`).
+
+### Default Global Repository Name
+
+By default, the global repository CR must be named `pipelines-as-code`. You can customize this by setting the `PAC_CONTROLLER_GLOBAL_REPOSITORY` environment variable in the controller and watcher deployments.
+
+### Repository URL
+
+The global repository CR does not need a valid `spec.url` field. You can either:
+- Leave it blank
+- Set it to a placeholder like `https://pac.global.repo`
+
+## Supported Settings
+
+The following settings can be configured in the global repository:
+
+<ParamField path="concurrency_limit" type="integer">
+  Maximum number of concurrent PipelineRuns allowed per repository.
+</ParamField>
+
+<ParamField path="params" type="array">
+  Custom parameters available to all repositories. Individual repositories can override these or define their own.
+</ParamField>
+
+<ParamField path="git_provider" type="object">
+  Git provider authentication settings including:
+  - `type` - Provider type (github, gitlab, forgejo, bitbucket-cloud, bitbucket-datacenter)
+  - `secret` - Reference to authentication secret
+  - `webhook_secret` - Reference to webhook secret
+  - `url` - Provider URL (for self-hosted instances)
+  - `user` - API username
+</ParamField>
+
+<ParamField path="settings" type="object">
+  Repository policies and settings:
+  - PipelineRun definition provenance
+  - GitHub App token scope settings
+  - Incoming webhook rules
+</ParamField>
+
+<Note>
+  Global settings only apply when running via Git provider events. They are not applied when using the `tkn pac` CLI directly.
+</Note>
+
+## Example Configuration
+
+### Basic Global Repository
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+spec:
+  url: "https://pac.global.repo"
+  concurrency_limit: 5
+  params:
+    - name: environment
+      value: "production"
+    - name: log-level
+      value: "info"
+```
+
+### Global Repository with Git Provider Settings
+
+For webhook-based Git providers, you can configure global authentication:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+spec:
+  url: "https://pac.global.repo"
+  concurrency_limit: 3
+  params:
+    - name: custom
+      value: "value"
+  git_provider:
+    type: gitlab
+    url: "https://gitlab.company.com"
+    secret:
+      name: "gitlab-token"
+    webhook_secret:
+      name: "gitlab-webhook-secret"
+```
+
+## How Global Settings Are Applied
+
+Global settings follow these precedence rules:
+
+1. **Local repository settings always win** - If a setting is defined in the namespace repository, it overrides the global setting
+2. **Global settings provide defaults** - If a setting is not defined locally, the global value is used
+3. **Settings are merged** - Some settings like custom parameters are combined from both sources
+
+### Example: Setting Precedence
+
+Consider a local repository in the `user-namespace`:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: repo
+  namespace: user-namespace
+spec:
+  url: "https://my.git.com"
+  concurrency_limit: 2
+  git_provider:
+    type: gitlab
+```
+
+And a global repository:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+spec:
+  url: "https://paac.repo"
+  concurrency_limit: 1
+  params:
+    - name: custom
+      value: "value"
+  git_provider:
+    type: gitlab
+    secret:
+      name: "gitlab-token"
+    webhook_secret:
+      name: "gitlab-webhook-secret"
+```
+
+**Result:**
+- `concurrency_limit` = `2` (from local repository)
+- `params.custom` = `"value"` (from global repository)
+- Git provider settings (secret, webhook_secret) are taken from global repository because the local repository has matching `type: gitlab`
+
+## Supported Git Provider Types
+
+When configuring `git_provider.type` for global settings, use these values:
+
+<ParamField path="github" type="string">
+  GitHub with webhook authentication (not GitHub App)
+</ParamField>
+
+<ParamField path="gitlab" type="string">
+  GitLab (SaaS or self-hosted)
+</ParamField>
+
+<ParamField path="forgejo" type="string">
+  Forgejo or Gitea instances
+</ParamField>
+
+<ParamField path="gitea" type="string">
+  Alias for forgejo (kept for backwards compatibility)
+</ParamField>
+
+<ParamField path="bitbucket-cloud" type="string">
+  Bitbucket Cloud (bitbucket.org)
+</ParamField>
+
+<ParamField path="bitbucket-datacenter" type="string">
+  Bitbucket Server/Data Center (self-hosted)
+</ParamField>
+
+<Warning>
+  Global repository settings can only reference one type of Git provider per cluster. If users need to target a different provider, they must specify their own provider information in their Repository CR.
+</Warning>
+
+## Git Provider Authentication
+
+When using global Git provider settings:
+
+1. **Local repository must specify matching type** - The `git_provider.type` in the local repository must match the global repository type
+2. **Secrets are fetched from global namespace** - Authentication secrets referenced in the global repository are fetched from the global repository's namespace
+3. **All repositories share credentials** - All repositories matching the provider type use the same authentication credentials
+
+### Creating Provider Secrets
+
+Secrets must be created in the same namespace as the global repository:
+
+```bash
+# Create GitLab token secret
+kubectl create secret generic gitlab-token \
+  -n pipelines-as-code \
+  --from-literal=token=glpat-xxxxxxxxxxxxxxxxxxxx
+
+# Create webhook secret
+kubectl create secret generic gitlab-webhook-secret \
+  -n pipelines-as-code \
+  --from-literal=webhook.secret=your-webhook-secret
+```
+
+## Use Cases
+
+### Organization-Wide Concurrency Limits
+
+Prevent resource exhaustion by setting default concurrency limits:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+spec:
+  url: "https://pac.global.repo"
+  concurrency_limit: 10
+```
+
+### Shared Custom Parameters
+
+Provide common parameters for all repositories:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+spec:
+  url: "https://pac.global.repo"
+  params:
+    - name: registry
+      value: "quay.io/myorg"
+    - name: cluster-domain
+      value: "apps.company.com"
+    - name: monitoring-endpoint
+      value: "https://metrics.company.com"
+```
+
+### Centralized Git Provider Configuration
+
+Manage Git provider credentials centrally:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+spec:
+  url: "https://pac.global.repo"
+  git_provider:
+    type: gitlab
+    url: "https://gitlab.internal.company.com"
+    secret:
+      name: "company-gitlab-token"
+      key: "token"
+    webhook_secret:
+      name: "company-gitlab-webhook"
+      key: "webhook.secret"
+```
+
+## Customizing Global Repository Name
+
+To use a different name for the global repository:
+
+1. Set the environment variable in the controller deployment:
+
+```bash
+kubectl set env deployment/pipelines-as-code-controller \
+  -n pipelines-as-code \
+  PAC_CONTROLLER_GLOBAL_REPOSITORY=my-global-repo
+```
+
+2. Set the environment variable in the watcher deployment:
+
+```bash
+kubectl set env deployment/pipelines-as-code-watcher \
+  -n pipelines-as-code \
+  PAC_CONTROLLER_GLOBAL_REPOSITORY=my-global-repo
+```
+
+3. Create the Repository CR with your custom name:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-global-repo
+  namespace: pipelines-as-code
+spec:
+  url: "https://pac.global.repo"
+  # ... your settings
+```
+
+## Verification
+
+To verify that global settings are being applied:
+
+1. Check the global repository exists:
+
+```bash
+kubectl get repository pipelines-as-code -n pipelines-as-code
+```
+
+2. Review controller logs for global repository processing:
+
+```bash
+kubectl logs -n pipelines-as-code deployment/pipelines-as-code-controller | grep global
+```
+
+3. Test with a repository that doesn't override global settings and verify the expected behavior
+
+## See Also
+
+- [Repository CRD Reference](/guide/repositorycrd) - Complete Repository CR specification
+- [Configuration](/operations/configuration) - ConfigMap settings
+- [Policy](/guide/policy) - Repository access policies

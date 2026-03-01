@@ -1,0 +1,470 @@
+---
+title: tkn pac generate
+description: Generate PipelineRun templates with language detection
+---
+
+# tkn pac generate
+
+Generate a simple PipelineRun template to get started with Pipelines-as-Code.
+
+## Synopsis
+
+```bash
+tkn pac generate [flags]
+tkn pac gen [flags]
+```
+
+## Description
+
+The `generate` command creates a basic PipelineRun template in the `.tekton/` directory. It:
+
+1. **Detects Git information** from current directory
+2. **Performs language detection** (Python, Go, Node.js, etc.)
+3. **Adds relevant tasks** based on detected language
+4. **Creates `.tekton/` directory** if it doesn't exist
+5. **Generates a customizable template**
+
+## Usage Examples
+
+<CodeGroup>
+
+```bash Interactive Mode
+# Generate with interactive prompts
+tkn pac generate
+```
+
+```bash Pull Request Event
+# Generate for pull requests on main branch
+tkn pac generate --event-type pull_request --branch main
+```
+
+```bash Push Event
+# Generate for push events
+tkn pac generate --event-type push --branch develop
+```
+
+```bash Custom File Name
+# Specify custom output file
+tkn pac generate --file-name .tekton/pr-validation.yaml
+```
+
+```bash Specific Language
+# Generate for specific language
+tkn pac generate --language python
+```
+
+```bash Overwrite Existing
+# Overwrite existing file without prompt
+tkn pac generate --file-name .tekton/pull-request.yaml --overwrite
+```
+
+```bash Custom Branch
+# Generate for feature branch
+tkn pac generate --event-type pull_request --branch "feature/*"
+```
+
+</CodeGroup>
+
+## Interactive Prompts
+
+When run without flags:
+
+### 1. Event Type Selection
+
+```
+? Enter the Git event type for triggering the pipeline:
+  › Pull Request
+    Push to a Branch or a Tag
+```
+
+### 2. Target Branch
+
+For **pull requests**:
+
+```
+Enter the target Git branch for the Pull Request (default: main):
+```
+
+For **push events**:
+
+```
+Enter a target Git branch or tag for the push (default: main):
+```
+
+### 3. File Overwrite Confirmation
+
+If the file already exists:
+
+```
+A file named .tekton/pull-request.yaml already exists. Would you like to override it? (y/N)
+```
+
+## Flags
+
+<ParamField path="--event-type" type="string">
+  Event type: `pull_request` or `push`
+</ParamField>
+
+<ParamField path="--branch" type="string">
+  Target branch for the PipelineRun (e.g., `main`, `develop`, `feature/*`)
+</ParamField>
+
+<ParamField path="--pipeline-name" type="string">
+  Custom pipeline name
+</ParamField>
+
+<ParamField path="-f, --file-name" type="string">
+  Output file location (default: `.tekton/<event>.yaml`)
+</ParamField>
+
+<ParamField path="--overwrite" type="boolean" default="false">
+  Overwrite existing file without prompting
+</ParamField>
+
+<ParamField path="-l, --language" type="string">
+  Generate template for specific programming language
+</ParamField>
+
+## Language Detection
+
+The generator detects languages by looking for specific files:
+
+| Language | Detection Files | Added Tasks |
+|----------|-----------------|-------------|
+| **Python** | `setup.py`, `pyproject.toml`, `requirements.txt` | [pylint](https://artifacthub.io/packages/tekton-task/tekton-catalog-tasks/pylint) |
+| **Go** | `go.mod`, `go.sum` | [golangci-lint](https://artifacthub.io/packages/tekton-task/tekton-catalog-tasks/golangci-lint) |
+| **Node.js** | `package.json` | [npm](https://artifacthub.io/packages/tekton-task/tekton-catalog-tasks/npm) |
+| **Java** | `pom.xml`, `build.gradle` | [maven](https://artifacthub.io/packages/tekton-task/tekton-catalog-tasks/maven) |
+| **Ruby** | `Gemfile` | [rubocop](https://artifacthub.io/packages/tekton-task/tekton-catalog-tasks/rubocop) |
+
+<Note>
+  Language detection adds relevant linting and testing tasks automatically.
+</Note>
+
+## Generated File Structure
+
+### Default File Naming
+
+Generated files are named based on event type:
+
+- **Pull Request**: `.tekton/pull-request.yaml`
+- **Push**: `.tekton/push.yaml`
+- **Multiple events**: `.tekton/pipelinerun.yaml`
+
+### Directory Creation
+
+If `.tekton/` doesn't exist:
+
+```
+ℹ️ Directory .tekton has been created.
+```
+
+## Output Example
+
+```bash
+$ tkn pac generate
+
+? Enter the Git event type for triggering the pipeline: Pull Request
+? Enter the target GIT branch for the Pull Request (default: main): main
+
+ℹ️ Directory .tekton has been created.
+✓ A basic template has been created in .tekton/pull-request.yaml, feel free to customize it.
+ℹ️ You can test your pipeline by pushing the generated template to your git repository
+```
+
+## Generated Template Examples
+
+### Basic Template
+
+```yaml .tekton/pull-request.yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: my-app-pull-request
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  pipelineSpec:
+    tasks:
+    - name: fetch-repository
+      taskRef:
+        name: git-clone
+        resolver: hub
+      workspaces:
+      - name: output
+        workspace: source
+      params:
+      - name: url
+        value: "{{ repo_url }}"
+      - name: revision
+        value: "{{ revision }}"
+  workspaces:
+  - name: source
+    emptyDir: {}
+```
+
+### Python Project Template
+
+When `setup.py` is detected:
+
+```yaml .tekton/pull-request.yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: python-app-pull-request
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  pipelineSpec:
+    tasks:
+    - name: fetch-repository
+      taskRef:
+        name: git-clone
+        resolver: hub
+      workspaces:
+      - name: output
+        workspace: source
+      params:
+      - name: url
+        value: "{{ repo_url }}"
+      - name: revision
+        value: "{{ revision }}"
+    
+    - name: pylint
+      runAfter: [fetch-repository]
+      taskRef:
+        name: pylint
+        resolver: hub
+      workspaces:
+      - name: source
+        workspace: source
+      params:
+      - name: args
+        value: ["--disable=C0114"]
+  
+  workspaces:
+  - name: source
+    emptyDir: {}
+```
+
+### Go Project Template
+
+When `go.mod` is detected:
+
+```yaml .tekton/pull-request.yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: go-app-pull-request
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  pipelineSpec:
+    tasks:
+    - name: fetch-repository
+      taskRef:
+        name: git-clone
+        resolver: hub
+      workspaces:
+      - name: output
+        workspace: source
+      params:
+      - name: url
+        value: "{{ repo_url }}"
+      - name: revision
+        value: "{{ revision }}"
+    
+    - name: golangci-lint
+      runAfter: [fetch-repository]
+      taskRef:
+        name: golangci-lint
+        resolver: hub
+      workspaces:
+      - name: source
+        workspace: source
+      params:
+      - name: package
+        value: "./..."
+  
+  workspaces:
+  - name: source
+    emptyDir: {}
+```
+
+## Template Variables
+
+Generated templates use these variables (substituted by PAC at runtime):
+
+| Variable | Description | Example |
+|----------|-------------|----------|
+| `{{ repo_url }}` | Repository URL | `https://github.com/org/repo` |
+| `{{ revision }}` | Git commit SHA | `abc123...` |
+| `{{ target_branch }}` | Target branch name | `main` |
+| `{{ source_branch }}` | Source branch name | `feature/new` |
+| `{{ event_type }}` | Event type | `pull_request` |
+| `{{ sender }}` | User who triggered | `username` |
+
+See [Template Variables](/docs/guide/authoringprs#variable-interpolation) for complete list.
+
+## Customization After Generation
+
+The generated template is a starting point. Common customizations:
+
+### Add More Tasks
+
+```yaml
+tasks:
+- name: fetch-repository
+  # ... existing task ...
+
+- name: run-tests
+  runAfter: [fetch-repository]
+  taskRef:
+    name: golang-test
+    resolver: hub
+  workspaces:
+  - name: source
+    workspace: source
+
+- name: build-image
+  runAfter: [run-tests]
+  taskRef:
+    name: buildah
+    resolver: hub
+  # ... params ...
+```
+
+### Add Workspaces
+
+```yaml
+workspaces:
+- name: source
+  volumeClaimTemplate:
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+
+- name: cache
+  persistentVolumeClaim:
+    claimName: build-cache
+```
+
+### Add Parameters
+
+```yaml
+spec:
+  params:
+  - name: image-name
+    value: "quay.io/myorg/myapp"
+  - name: dockerfile
+    value: "./Dockerfile"
+  
+  pipelineSpec:
+    params:
+    - name: image-name
+      type: string
+    - name: dockerfile
+      type: string
+    # ... tasks ...
+```
+
+### Target Multiple Branches
+
+```yaml
+metadata:
+  annotations:
+    pipelinesascode.tekton.dev/on-target-branch: "[main, develop, release/*]"
+```
+
+## Common Workflows
+
+### Generate and Test Locally
+
+```bash
+# Generate template
+tkn pac generate
+
+# Test locally before pushing
+tkn pac resolve -f .tekton/pull-request.yaml | kubectl apply -f -
+```
+
+### Generate Multiple Event Types
+
+```bash
+# Pull request pipeline
+tkn pac generate --event-type pull_request --branch main
+
+# Push pipeline
+tkn pac generate --event-type push --branch main --file-name .tekton/push.yaml
+
+# Tag pipeline
+tkn pac generate --event-type push --branch "refs/tags/*" --file-name .tekton/tag.yaml
+```
+
+### Generate per Environment
+
+```bash
+# Development
+tkn pac generate --branch develop --file-name .tekton/dev.yaml
+
+# Staging  
+tkn pac generate --branch staging --file-name .tekton/staging.yaml
+
+# Production
+tkn pac generate --branch main --file-name .tekton/prod.yaml
+```
+
+## Troubleshooting
+
+### File Already Exists
+
+```
+A file named .tekton/pull-request.yaml already exists.
+```
+
+**Solution**: Use `--overwrite` or choose different filename:
+
+```bash
+tkn pac generate --overwrite
+# or
+tkn pac generate --file-name .tekton/pr-v2.yaml
+```
+
+### Not in Git Repository
+
+```
+ℹ️ Could not detect Git information
+```
+
+**Solution**: This is not an error. The template will be created without Git-specific defaults.
+
+### Permission Denied
+
+```
+Error: cannot write template to .tekton/pull-request.yaml: permission denied
+```
+
+**Solution**: Check directory permissions:
+
+```bash
+chmod 755 .tekton
+```
+
+## Related Commands
+
+- [`tkn pac create repo`](/cli/create) - Create Repository CRD
+- [`tkn pac resolve`](/cli/resolve) - Test generated templates locally
+- [`tkn pac bootstrap`](/cli/bootstrap) - Set up PAC installation
+
+## See Also
+
+- [Authoring PipelineRuns](/docs/guide/authoringprs)
+- [Annotations Reference](/docs/guide/authoringprs#annotations)
+- [Template Variables](/docs/guide/authoringprs#variable-interpolation)
+- [Tekton Hub Tasks](https://hub.tekton.dev/)

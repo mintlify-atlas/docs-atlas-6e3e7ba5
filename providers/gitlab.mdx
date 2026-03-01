@@ -1,0 +1,329 @@
+---
+title: GitLab Setup
+description: Configure Pipelines as Code with GitLab webhooks for seamless CI/CD integration
+---
+
+# GitLab Setup
+
+Pipelines as Code supports GitLab through webhooks, providing full integration with GitLab merge requests and push events.
+
+## Prerequisites
+
+Before starting, ensure you have [installed Pipelines as Code](/docs/install/installation) on your Kubernetes cluster.
+
+## Create GitLab Personal Access Token
+
+Create a personal access token for Pipelines as Code to interact with GitLab.
+
+<Steps>
+  <Step title="Navigate to Personal Access Tokens">
+    Follow GitLab's guide to create a personal access token:
+    https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html
+    
+    Go to: **User Settings** > **Access Tokens**
+  </Step>
+  
+  <Step title="Configure token settings">
+    - **Token name**: `pipelines-as-code-token`
+    - **Expiration date**: Set according to your security policy (30-90 days recommended)
+    - **Scopes**: Select `api`
+  </Step>
+  
+  <Step title="Generate and save token">
+    Click **Create personal access token** and save it immediately.
+    
+    <Warning>You won't be able to see the token again after leaving the page.</Warning>
+  </Step>
+</Steps>
+
+### Token Scoping Considerations
+
+<Note>
+**Project-scoped tokens** are more secure but have limitations with forked repositories:
+
+- Can only access the upstream repository
+- Cannot set status checks on fork source branches
+- Pipeline status will fall back to merge request comments
+
+**Group/Organization-scoped tokens** provide broader access:
+
+- Can access multiple repositories including forks
+- Enables status checks on both fork and upstream
+- Better for environments with fork-based workflows
+</Note>
+
+## Working with Forked Repositories
+
+Pipelines as Code supports merge requests from forked repositories with an automatic fallback mechanism:
+
+### Status Reporting Fallback Chain
+
+1. **Primary**: Attempt to set commit status on fork (source project)
+   - Requires: Token with write access to fork repository
+   - Result: Status appears in both fork and upstream UI
+
+2. **Fallback**: Attempt to set commit status on upstream (target project)
+   - May fail if no CI pipeline exists for this commit in upstream
+   - Result: Status appears in upstream repository UI
+
+3. **Final Fallback**: Post status as merge request comment
+   - Always works (requires MR write permissions)
+   - Provides same information as status checks
+
+<Note>
+This design ensures status reporting works even with restricted token permissions.
+</Note>
+
+## Create Repository and Configure Webhook
+
+There are two methods to set up the Repository and webhook:
+
+### Automated Setup with tkn pac CLI
+
+<Steps>
+  <Step title="Run create repo command">
+    ```bash
+    tkn pac create repo
+    ```
+  </Step>
+  
+  <Step title="Follow the prompts">
+    Example session:
+    
+    ```bash
+    $ tkn pac create repo
+    
+    ? Enter the Git repository url (default: https://gitlab.com/repositories/project):
+    ? Please enter the namespace where the pipeline should run (default: project-pipelines):
+    ! Namespace project-pipelines is not found
+    ? Would you like me to create the namespace project-pipelines? Yes
+    ✓ Repository repositories-project has been created in project-pipelines namespace
+    ✓ Setting up GitLab Webhook for Repository https://gitlab.com/repositories/project
+    ? Please enter the project ID for the repository you want to be configured,
+      project ID refers to an unique ID (e.g. 34405323) shown at the top of your GitLab project: 17103
+    👀 I have detected a controller url: https://controller.example.com
+    ? Do you want me to use it? Yes
+    ? Please enter the secret to configure the webhook for payload validation (default: lFjHIEcaGFlF): lFjHIEcaGFlF
+    ℹ️ You now need to create a GitLab personal access token with `api` scope
+    ? Please enter the GitLab access token: **************************
+    ? Please enter your GitLab API URL: https://gitlab.com
+    ✓ Webhook has been created on your repository
+    🔑 Webhook Secret repositories-project has been created in the project-pipelines namespace.
+    ✓ A basic template has been created in .tekton/pipelinerun.yaml
+    ```
+    
+    <Note>The Project ID is displayed at the top of your GitLab project page.</Note>
+  </Step>
+</Steps>
+
+### Manual Setup
+
+<Steps>
+  <Step title="Get controller URL">
+    On OpenShift:
+    ```bash
+    echo https://$(oc get route -n pipelines-as-code pipelines-as-code-controller -o jsonpath='{.spec.host}')
+    ```
+  </Step>
+  
+  <Step title="Create webhook in GitLab">
+    1. Go to your GitLab repository
+    2. Navigate to **Settings** > **Webhooks**
+    3. Configure the webhook:
+       - **URL**: Your Pipelines as Code controller URL
+       - **Secret token**: Generate with `head -c 30 /dev/random | base64`
+       - **Trigger**: Select these events:
+         - Push events
+         - Comments
+         - Merge request events
+         - Tag push events
+    4. Click **Add webhook**
+  </Step>
+  
+  <Step title="Create Kubernetes secret">
+    ```bash
+    kubectl -n target-namespace create secret generic gitlab-webhook-config \
+      --from-literal provider.token="TOKEN_AS_GENERATED_PREVIOUSLY" \
+      --from-literal webhook.secret="SECRET_AS_SET_IN_WEBHOOK_CONFIGURATION"
+    ```
+  </Step>
+  
+  <Step title="Create Repository CRD">
+    ```yaml
+    ---
+    apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+    kind: Repository
+    metadata:
+      name: my-repo
+      namespace: target-namespace
+    spec:
+      url: "https://gitlab.com/group/project"
+      git_provider:
+        # Uncomment for self-hosted GitLab:
+        # url: "https://gitlab.example.com"
+        type: "gitlab"
+        secret:
+          name: "gitlab-webhook-config"
+          # Optionally specify a different key:
+          # key: "provider.token"
+        webhook_secret:
+          name: "gitlab-webhook-config"
+          # Optionally specify a different key:
+          # key: "webhook.secret"
+    ```
+    
+    <Note>For self-hosted GitLab instances, you must set `git_provider.url` to your GitLab API URL.</Note>
+  </Step>
+</Steps>
+
+## Troubleshooting Fork Merge Requests
+
+### Why Comments Instead of Status Checks?
+
+**Symptom**: Pipeline status appears as MR comments instead of in the Pipelines tab.
+
+**Cause**: The GitLab token lacks write access to the fork repository.
+
+**What happened**:
+1. Attempted to set status on fork → Failed (insufficient permissions)
+2. Attempted to set status on upstream → Failed (no CI pipeline entry)
+3. Fell back to MR comment → Succeeded ✓
+
+<Note>
+This is working as designed. Comments provide the same pipeline information as status checks.
+</Note>
+
+### How to Get Status Checks
+
+Choose the option that fits your security requirements:
+
+#### Option 1: Bot Account (Recommended for Production)
+
+<Steps>
+  <Step title="Create GitLab bot account">
+    Create a dedicated service account for Pipelines as Code.
+  </Step>
+  
+  <Step title="Grant permissions">
+    - **Read access**: Upstream and fork repositories
+    - **Write access**: Fork repository (for status updates)
+    - **CI pipeline access**: Upstream repository
+  </Step>
+  
+  <Step title="Generate bot token">
+    Create a personal access token with `api` scope for the bot account.
+  </Step>
+  
+  <Step title="Use bot token in Repository CR">
+    Update the secret to use the bot token instead of a user token.
+  </Step>
+</Steps>
+
+**Advantages**:
+- Minimal permissions principle
+- Clear audit trail (pipeline actions attributed to bot)
+- No token rotation when team members change
+
+#### Option 2: Group-scoped Token
+
+Use a [Group Access Token](https://docs.gitlab.com/ee/user/group/settings/group_access_tokens.html) with `api` scope.
+
+**Advantages**:
+- Simple to set up
+- Works for fork and upstream repositories
+
+**Trade-offs**:
+- Broader permission scope
+- May require GitLab Premium or Ultimate
+
+#### Option 3: Accept Comment-based Status (Default)
+
+Continue using project-scoped token with comment fallback.
+
+**Advantages**:
+- Most restrictive permissions
+- No additional configuration needed
+
+**Trade-off**: Status appears as comments instead of checks
+
+### Disable All Comments
+
+To disable status comments completely:
+
+```yaml
+spec:
+  settings:
+    gitlab:
+      comment_strategy: "disable_all"
+```
+
+See [Repository CRD documentation](/docs/guide/repositorycrd#controlling-pullmerge-request-comment-volume) for details.
+
+## Managing Webhooks and Tokens
+
+### Add Webhook to Existing Repository
+
+```bash
+tkn pac webhook add -n project-pipelines
+```
+
+Example:
+```bash
+$ tkn pac webhook add -n project-pipelines
+
+✓ Setting up GitLab Webhook for Repository https://gitlab.com/repositories/project
+? Please enter the project ID: 17103
+👀 I have detected a controller url: https://controller.example.com
+? Do you want me to use it? Yes
+? Please enter the secret to configure the webhook: TXArbGNDHTXU
+✓ Webhook has been created on your repository
+🔑 Secret repositories-project has been updated with webhook secret
+```
+
+### Update Access Token
+
+#### Using tkn pac CLI
+
+```bash
+tkn pac webhook update-token -n repo-pipelines
+```
+
+Example:
+```bash
+$ tkn pac webhook update-token -n repo-pipelines
+
+? Please enter your personal access token: **************************
+🔑 Secret repositories-project has been updated with new personal access token
+```
+
+#### Using kubectl
+
+Find the secret name in your Repository CRD:
+```yaml
+spec:
+  git_provider:
+    secret:
+      name: "gitlab-webhook-config"
+```
+
+Update:
+```bash
+kubectl -n $target_namespace patch secret gitlab-webhook-config -p "{\"data\": {\"provider.token\": \"$(echo -n $NEW_TOKEN|base64 -w0)\"}}"
+```
+
+## Important Notes
+
+- **Self-hosted GitLab**: Must specify `git_provider.url` in Repository CRD
+- **Secrets**: Must be in the same namespace as the Repository CRD
+- **Fork workflows**: Consider token scope requirements for your workflow
+- **Comment strategy**: Can be configured to control MR comment volume
+
+## Next Steps
+
+After configuring GitLab:
+
+1. Add `.tekton` directory with pipeline definitions to your repository
+2. Test by creating a merge request or pushing commits
+3. Monitor pipeline status in the Pipelines tab or MR comments
+
+See the [Repository CRD documentation](/docs/guide/repositorycrd) for advanced configuration options.

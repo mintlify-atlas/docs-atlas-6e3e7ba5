@@ -1,0 +1,408 @@
+---
+title: Logging Configuration
+description: Configure log levels and debugging for Pipelines as Code components
+---
+
+Pipelines as Code uses structured logging to provide insights into controller operations, webhook processing, and PipelineRun status updates. The logging behavior is configured through the `pac-config-logging` ConfigMap.
+
+## Logging ConfigMap
+
+The logging configuration is stored in the `pac-config-logging` ConfigMap in the Pipelines as Code namespace (typically `pipelines-as-code`).
+
+### Viewing Logging Configuration
+
+```bash
+kubectl get configmap pac-config-logging -n pipelines-as-code -o yaml
+```
+
+## Configuration Structure
+
+The ConfigMap contains two types of configuration:
+
+1. **Global Zap Logger Configuration** - Defines output format, encoding, and default log level
+2. **Component-Specific Log Levels** - Overrides the default level for individual components
+
+### Example Configuration
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pac-config-logging
+  namespace: pipelines-as-code
+data:
+  zap-logger-config: |
+    {
+      "level": "info",
+      "development": false,
+      "sampling": {
+        "initial": 100,
+        "thereafter": 100
+      },
+      "outputPaths": ["stdout"],
+      "errorOutputPaths": ["stderr"],
+      "encoding": "json",
+      "encoderConfig": {
+        "timeKey": "ts",
+        "levelKey": "level",
+        "nameKey": "logger",
+        "callerKey": "caller",
+        "messageKey": "msg",
+        "stacktraceKey": "stacktrace",
+        "lineEnding": "",
+        "levelEncoder": "",
+        "timeEncoder": "iso8601",
+        "durationEncoder": "",
+        "callerEncoder": ""
+      }
+    }
+  # Component-specific log levels
+  loglevel.pipelinesascode: "info"
+  loglevel.pac-watcher: "info"
+  loglevel.pipelines-as-code-webhook: "info"
+```
+
+## Component Log Levels
+
+Pipelines as Code has three main components, each with configurable log levels:
+
+<ParamField path="loglevel.pipelinesascode" type="string" default="info">
+  Log level for the main `pipelines-as-code-controller` component. This handles webhook events, repository management, and PipelineRun creation.
+</ParamField>
+
+<ParamField path="loglevel.pac-watcher" type="string" default="info">
+  Log level for the `pipelines-as-code-watcher` component. This monitors PipelineRun status and reports results back to Git providers.
+</ParamField>
+
+<ParamField path="loglevel.pipelines-as-code-webhook" type="string" default="info">
+  Log level for the `pipelines-as-code-webhook` component. This validates and mutates Pipelines as Code resources.
+</ParamField>
+
+## Supported Log Levels
+
+The Zap logger supports the following log levels (from most to least verbose):
+
+<ParamField path="debug" type="string">
+  Fine-grained debugging information. Use for troubleshooting specific issues. Includes API call details, request/response data, and internal state.
+</ParamField>
+
+<ParamField path="info" type="string">
+  Normal operational logging. Recommended for production. Logs important events like PipelineRun creation, status updates, and configuration changes.
+</ParamField>
+
+<ParamField path="warn" type="string">
+  Unexpected but non-critical errors. Indicates potential issues that don't prevent operation.
+</ParamField>
+
+<ParamField path="error" type="string">
+  Critical errors that are unexpected during normal operation. May indicate configuration issues or failures.
+</ParamField>
+
+<ParamField path="dpanic" type="string">
+  Triggers a panic (crash) in development mode. Logs critical errors that should never occur.
+</ParamField>
+
+<ParamField path="panic" type="string">
+  Triggers a panic (crash) in all modes. Use for unrecoverable errors.
+</ParamField>
+
+<ParamField path="fatal" type="string">
+  Immediately exits the process with status 1. Use only for initialization failures.
+</ParamField>
+
+## Changing Log Levels
+
+### Update a Specific Component
+
+Change the log level for a single component using `kubectl patch`:
+
+```bash
+# Set watcher to debug level
+kubectl patch configmap pac-config-logging -n pipelines-as-code \
+  --type json \
+  -p '[{"op": "replace", "path": "/data/loglevel.pac-watcher", "value":"debug"}]'
+
+# Set controller to debug level
+kubectl patch configmap pac-config-logging -n pipelines-as-code \
+  --type json \
+  -p '[{"op": "replace", "path": "/data/loglevel.pipelinesascode", "value":"debug"}]'
+
+# Set webhook to debug level
+kubectl patch configmap pac-config-logging -n pipelines-as-code \
+  --type json \
+  -p '[{"op": "replace", "/data/loglevel.pipelines-as-code-webhook", "value":"debug"}]'
+```
+
+<Note>
+  The watcher automatically picks up ConfigMap changes. Most components do not require restart for log level changes to take effect.
+</Note>
+
+### Use Same Level for All Components
+
+To use a single log level for all components, remove the individual `loglevel.*` keys. Components will then use the level defined in `zap-logger-config`:
+
+```bash
+kubectl patch configmap pac-config-logging -n pipelines-as-code \
+  --type json \
+  -p '[
+    {"op": "remove", "path": "/data/loglevel.pac-watcher"},
+    {"op": "remove", "path": "/data/loglevel.pipelines-as-code-webhook"},
+    {"op": "remove", "path": "/data/loglevel.pipelinesascode"}
+  ]'
+```
+
+Then update the global level:
+
+```bash
+kubectl edit configmap pac-config-logging -n pipelines-as-code
+# Change "level": "info" to "level": "debug" in zap-logger-config
+```
+
+## Debugging API Interactions
+
+When troubleshooting Git provider integration issues (GitHub, GitLab, Bitbucket), enable debug logging for the controller to see detailed API interaction logs.
+
+### Enable Debug Logging
+
+```bash
+kubectl patch configmap pac-config-logging -n pipelines-as-code \
+  --type json \
+  -p '[{"op": "replace", "path": "/data/loglevel.pipelinesascode", "value":"debug"}]'
+```
+
+### API Call Logging
+
+With debug logging enabled, the controller logs:
+
+- Request URL and method
+- Response status code
+- Request duration in milliseconds
+- API rate limit information (for GitHub)
+- Response payload (when relevant)
+
+**Example log output:**
+
+```json
+{
+  "level": "debug",
+  "ts": "2024-03-01T10:15:30.123Z",
+  "caller": "github/client.go:45",
+  "msg": "GitHub API call completed",
+  "operation": "get_pull_request",
+  "duration_ms": 234,
+  "provider": "github",
+  "repo": "myorg/myrepo",
+  "url_path": "/repos/myorg/myrepo/pulls/42",
+  "rate_limit_remaining": "4850",
+  "status_code": 200
+}
+```
+
+## GitHub Rate Limit Monitoring
+
+When debug logging is enabled for the controller, Pipelines as Code automatically monitors GitHub API rate limits and provides intelligent warnings.
+
+### Rate Limit Thresholds
+
+<ParamField path="Debug Level" type="all API calls">
+  All API calls log duration, URL, and remaining rate limit count.
+</ParamField>
+
+<ParamField path="Info Level" type="< 500 remaining">
+  When remaining calls drop below 500, logs include additional context like total limit and reset time.
+</ParamField>
+
+<ParamField path="Warning Level" type="< 100 remaining">
+  When remaining calls drop below 100, warnings alert administrators to potential quota issues.
+</ParamField>
+
+<ParamField path="Error Level" type="< 50 remaining">
+  When remaining calls drop below 50, critical alerts indicate immediate attention is needed.
+</ParamField>
+
+### Example Rate Limit Logs
+
+```json
+// Debug - Normal operation
+{
+  "level": "debug",
+  "ts": "2024-03-01T10:15:30.123Z",
+  "msg": "GitHub API call completed",
+  "rate_limit_remaining": "4850",
+  "rate_limit_limit": "5000",
+  "rate_limit_reset": "1709294400"
+}
+
+// Info - Moderate usage
+{
+  "level": "info",
+  "ts": "2024-03-01T10:15:30.123Z",
+  "msg": "GitHub API rate limit moderate",
+  "repo": "myorg/myrepo",
+  "remaining": 350,
+  "limit": "5000",
+  "reset": "1709294400 (15:30:00 UTC)"
+}
+
+// Warning - Low rate limit
+{
+  "level": "warn",
+  "ts": "2024-03-01T10:15:30.123Z",
+  "msg": "GitHub API rate limit running low",
+  "repo": "myorg/myrepo",
+  "remaining": 75,
+  "limit": "5000",
+  "reset": "1709294400 (15:30:00 UTC)"
+}
+
+// Error - Critically low
+{
+  "level": "error",
+  "ts": "2024-03-01T10:15:30.123Z",
+  "msg": "GitHub API rate limit critically low",
+  "repo": "myorg/myrepo",
+  "remaining": 25,
+  "limit": "5000",
+  "reset": "1709294400 (15:30:00 UTC)"
+}
+```
+
+### Rate Limit Information
+
+Rate limit logs include:
+
+- **Remaining calls**: Number of API calls left in current window
+- **Total limit**: Maximum allowed calls (typically 5000 for authenticated requests)
+- **Reset time**: Unix timestamp and human-readable time when limit resets
+- **Repository context**: Which repository triggered the API call
+
+### Benefits of Rate Limit Monitoring
+
+<Note>
+  Rate limit monitoring helps you:
+  - **Prevent service disruptions** - Early warnings allow proactive measures
+  - **Optimize API usage** - Identify repositories consuming excessive API calls
+  - **Plan maintenance** - Schedule intensive operations around reset times
+  - **Debug authentication** - Rate limit headers indicate token validity
+</Note>
+
+## Viewing Logs
+
+### Controller Logs
+
+```bash
+# Follow controller logs
+kubectl logs -f deployment/pipelines-as-code-controller -n pipelines-as-code
+
+# View recent controller logs
+kubectl logs deployment/pipelines-as-code-controller -n pipelines-as-code --tail=100
+
+# Search for specific events
+kubectl logs deployment/pipelines-as-code-controller -n pipelines-as-code | grep "error"
+```
+
+### Watcher Logs
+
+```bash
+# Follow watcher logs
+kubectl logs -f deployment/pipelines-as-code-watcher -n pipelines-as-code
+
+# View recent watcher logs
+kubectl logs deployment/pipelines-as-code-watcher -n pipelines-as-code --tail=100
+```
+
+### Webhook Logs
+
+```bash
+# Follow webhook logs
+kubectl logs -f deployment/pipelines-as-code-webhook -n pipelines-as-code
+
+# View recent webhook logs
+kubectl logs deployment/pipelines-as-code-webhook -n pipelines-as-code --tail=100
+```
+
+## Log Format
+
+By default, logs are output in JSON format, which is ideal for log aggregation systems like Elasticsearch, Splunk, or Loki.
+
+### JSON Log Structure
+
+```json
+{
+  "level": "info",
+  "ts": "2024-03-01T10:15:30.123Z",
+  "caller": "reconciler/pipelinerun.go:123",
+  "msg": "PipelineRun created successfully",
+  "namespace": "default",
+  "repository": "myorg-myrepo",
+  "pipelinerun": "pr-12345",
+  "event_type": "pull_request"
+}
+```
+
+### Changing Log Format
+
+To output logs in console format (useful for local development):
+
+```bash
+kubectl edit configmap pac-config-logging -n pipelines-as-code
+```
+
+Change `"encoding": "json"` to `"encoding": "console"` in the `zap-logger-config`.
+
+## Troubleshooting Common Issues
+
+### Logs Not Updating After ConfigMap Change
+
+Some components may need restart:
+
+```bash
+kubectl rollout restart deployment/pipelines-as-code-controller -n pipelines-as-code
+kubectl rollout restart deployment/pipelines-as-code-webhook -n pipelines-as-code
+```
+
+### Too Many Debug Logs
+
+If debug logging produces too much output, enable it only for specific components:
+
+```bash
+# Only debug the controller
+kubectl patch configmap pac-config-logging -n pipelines-as-code \
+  --type json \
+  -p '[
+    {"op": "replace", "path": "/data/loglevel.pipelinesascode", "value":"debug"},
+    {"op": "replace", "path": "/data/loglevel.pac-watcher", "value":"info"},
+    {"op": "replace", "path": "/data/loglevel.pipelines-as-code-webhook", "value":"info"}
+  ]'
+```
+
+### Finding Errors in Logs
+
+```bash
+# Search for errors across all components
+kubectl logs deployment/pipelines-as-code-controller -n pipelines-as-code | jq 'select(.level=="error")'
+
+# Count errors in last hour
+kubectl logs deployment/pipelines-as-code-controller -n pipelines-as-code --since=1h | jq 'select(.level=="error")' | wc -l
+```
+
+## Best Practices
+
+<Note>
+  **Production Logging:**
+  - Use `info` level for production environments
+  - Enable `debug` temporarily for troubleshooting
+  - Use structured logging for easier parsing
+  - Integrate with log aggregation systems
+  - Set up alerts for `error` and `warn` levels
+</Note>
+
+<Warning>
+  Debug logging may expose sensitive information in API request/response logs. Only enable debug logging when actively troubleshooting and disable it afterward.
+</Warning>
+
+## See Also
+
+- [Knative Logging Documentation](https://knative.dev/docs/serving/observability/logging/config-logging) - Detailed Zap logger configuration
+- [Metrics](/operations/metrics) - Monitor Pipelines as Code with Prometheus
+- [Configuration](/operations/configuration) - Main ConfigMap settings

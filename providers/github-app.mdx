@@ -1,0 +1,191 @@
+---
+title: GitHub App Setup
+description: Configure Pipelines as Code with GitHub Apps for seamless integration with GitHub repositories
+---
+
+# GitHub App Setup
+
+The GitHub App installation is the recommended way to integrate Pipelines as Code with GitHub. It provides the best user experience by leveraging GitHub's Check Runs API to display pipeline status directly in pull requests.
+
+## Overview
+
+GitHub Apps act as the integration point between your Kubernetes cluster and GitHub, bringing Git workflows into Tekton pipelines. Typically, you need only one GitHub App per cluster, usually set up by a cluster administrator.
+
+The GitHub App webhook must point to your Pipelines as Code controller route or ingress endpoint to receive GitHub events.
+
+## Setup Methods
+
+There are two ways to set up a GitHub App:
+
+### Option 1: Automated Setup with tkn pac CLI
+
+The easiest method is using the `tkn pac bootstrap` command:
+
+<Steps>
+  <Step title="Run bootstrap command">
+    ```bash
+    tkn pac bootstrap github-app
+    ```
+    
+    This command will:
+    - Create a GitHub App with the correct permissions
+    - Generate the webhook secret
+    - Configure the webhook URL
+    - Create the necessary Kubernetes secrets
+  </Step>
+  
+  <Step title="Install the GitHub App">
+    After creating the GitHub App, you must install it on the repositories where you want to use Pipelines as Code.
+    
+    Navigate to your GitHub App settings and click "Install App" to select repositories.
+  </Step>
+</Steps>
+
+### Option 2: Manual Setup
+
+For more control over the configuration, you can set up the GitHub App manually:
+
+<Steps>
+  <Step title="Create a new GitHub App">
+    1. Go to https://github.com/settings/apps (or Settings > Developer settings > GitHub Apps)
+    2. Click the **New GitHub App** button
+  </Step>
+  
+  <Step title="Configure basic information">
+    Provide the following details:
+    
+    - **GitHub Application Name**: `OpenShift Pipelines` (or your preferred name)
+    - **Homepage URL**: Your OpenShift Console URL or cluster dashboard
+    - **Webhook URL**: The Pipelines as Code controller public endpoint
+    
+    To get the webhook URL on OpenShift:
+    ```bash
+    echo https://$(oc get route -n pipelines-as-code pipelines-as-code-controller -o jsonpath='{.spec.host}')
+    ```
+    
+    - **Webhook secret**: Generate a secure secret:
+    ```bash
+    head -c 30 /dev/random | base64
+    ```
+    
+    <Note>Save the webhook secret - you'll need it when creating the Kubernetes secret.</Note>
+  </Step>
+  
+  <Step title="Set repository permissions">
+    Configure the following repository permissions:
+    
+    | Permission | Access |
+    |------------|--------|
+    | Checks | Read & Write |
+    | Contents | Read & Write |
+    | Issues | Read & Write |
+    | Metadata | Read only |
+    | Pull requests | Read & Write |
+  </Step>
+  
+  <Step title="Set organization permissions">
+    Configure organization permissions:
+    
+    | Permission | Access |
+    |------------|--------|
+    | Members | Read only |
+  </Step>
+  
+  <Step title="Subscribe to events">
+    Select the following webhook events:
+    
+    - Check run
+    - Check suite
+    - Issue comment
+    - Commit comment
+    - Pull request
+    - Push
+  </Step>
+  
+  <Step title="Create the GitHub App">
+    Click **Create GitHub App** to save your configuration.
+  </Step>
+  
+  <Step title="Note the App ID">
+    On the GitHub App details page, note the **App ID** displayed at the top of the page.
+  </Step>
+  
+  <Step title="Generate a private key">
+    In the **Private keys** section:
+    1. Click **Generate Private key**
+    2. The key will download automatically
+    3. Store it securely - you'll need it to configure Pipelines as Code
+    
+    <Warning>Keep the private key secure. You'll need it to reconfigure the app if you move to a different cluster.</Warning>
+  </Step>
+</Steps>
+
+## Configure Pipelines as Code to Use the GitHub App
+
+After creating the GitHub App, configure your cluster to use it:
+
+<Steps>
+  <Step title="Create the Kubernetes secret">
+    Create a secret containing the GitHub App credentials:
+    
+    ```bash
+    kubectl -n pipelines-as-code create secret generic pipelines-as-code-secret \
+      --from-literal github-private-key="$(cat $PATH_PRIVATE_KEY)" \
+      --from-literal github-application-id="APP_ID" \
+      --from-literal webhook.secret="WEBHOOK_SECRET"
+    ```
+    
+    Replace:
+    - `$PATH_PRIVATE_KEY` - Path to the downloaded private key file
+    - `APP_ID` - The App ID from the GitHub App details page
+    - `WEBHOOK_SECRET` - The webhook secret you configured
+  </Step>
+  
+  <Step title="Install the GitHub App on repositories">
+    Navigate to your GitHub App settings and install it on the repositories where you want to use Pipelines as Code.
+  </Step>
+</Steps>
+
+## GitHub Enterprise Support
+
+Pipelines as Code fully supports GitHub Enterprise.
+
+<Note>
+No special configuration is needed for GitHub Enterprise. Pipelines as Code automatically detects GitHub Enterprise headers and uses the appropriate API endpoints.
+</Note>
+
+The detection works automatically when:
+- GitHub Enterprise sends webhooks to your controller
+- The controller identifies the GitHub Enterprise headers
+- API calls are routed to your GitHub Enterprise instance
+
+## Authentication Flow
+
+The GitHub App uses the following authentication mechanism:
+
+1. **Webhook Validation**: Incoming webhooks are validated using the webhook secret to ensure they're from GitHub
+2. **Token Generation**: The controller generates a short-lived installation token using the GitHub App private key
+3. **API Operations**: The installation token is used for GitHub API operations (setting status, fetching code, etc.)
+
+This approach provides secure, temporary credentials for each operation without requiring long-lived personal access tokens.
+
+## Permissions Reference
+
+Here's why each permission is needed:
+
+- **Checks (Read & Write)**: Display pipeline status in the GitHub Checks tab
+- **Contents (Read & Write)**: Access `.tekton` directory and pipeline definitions
+- **Issues (Read & Write)**: Support for `/retest` and `/ok-to-test` commands
+- **Metadata (Read only)**: Access repository information
+- **Pull requests (Read & Write)**: Trigger pipelines on PR events and update status
+- **Members (Read only)**: Verify user permissions for triggering pipelines
+
+## Next Steps
+
+After setting up your GitHub App:
+
+1. Create a Repository CRD for each repository you want to monitor
+2. Add `.tekton` directory with your pipeline definitions to your repositories
+3. Test the integration by creating a pull request
+
+See the [Repository CRD documentation](/docs/guide/repositorycrd) for more details on configuring repositories.

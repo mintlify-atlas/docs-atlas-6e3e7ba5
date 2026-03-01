@@ -1,0 +1,404 @@
+---
+title: Policy and Authorization
+description: Control who can trigger pipelines with team-based policies and OWNERS files
+---
+
+## Overview
+
+Pipelines-as-Code uses policies to control which users can trigger PipelineRuns based on team membership in your Git provider organization. This provides an additional security layer beyond the standard repository permissions.
+
+<Note>
+**Supported Providers:** GitHub (App and Webhook) and Forgejo/Gitea. GitLab and Bitbucket do not currently support team-based policies.
+</Note>
+
+## How Policies Work
+
+Policies are defined in the Repository CR under `spec.settings.policy` and define two main authorization actions:
+
+1. **pull_request**: Controls who can trigger CI on their own pull requests
+2. **ok_to_test**: Controls who can authorize external contributors to run CI
+
+Policies work in conjunction with:
+- Repository collaborators (users with direct access)
+- Organization members
+- OWNERS file specifications
+- Team membership in the Git provider
+
+## Policy Configuration
+
+### Repository CR Setup
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+spec:
+  url: "https://github.com/my-org/my-repo"
+  settings:
+    policy:
+      pull_request:
+        - core-developers
+        - qa-team
+      ok_to_test:
+        - senior-developers
+        - release-managers
+```
+
+<ParamField path="settings.policy.pull_request" type="array">
+  List of team names (from your Git provider organization) whose members can trigger CI on their own pull requests.
+  
+  **Effect:** Only members of these teams can automatically trigger PipelineRuns on their PRs, regardless of their repository role.
+</ParamField>
+
+<ParamField path="settings.policy.ok_to_test" type="array">
+  List of team names whose members can authorize external contributors to run CI by commenting `/ok-to-test` on PRs.
+  
+  **Effect:** These users act as gatekeepers who can vouch for external contributions and allow them to run in your CI environment.
+</ParamField>
+
+## Authorization Actions
+
+### pull_request Policy
+
+Restricts who can trigger CI on pull requests:
+
+```yaml
+settings:
+  policy:
+    pull_request:
+      - developers
+      - qa-engineers
+```
+
+**Without this policy:**
+- Any repository collaborator can trigger CI
+- Organization members can trigger CI
+- Users in OWNERS file can trigger CI
+
+**With this policy:**
+- **Only** members of specified teams can trigger CI
+- Repository owners still have access
+- OWNERS file members still have access
+- Other collaborators are blocked
+
+<Note>
+This policy adds an additional restriction on top of existing repository permissions. It doesn't grant new permissions.
+</Note>
+
+### ok_to_test Policy
+
+Controls who can authorize external contributors:
+
+```yaml
+settings:
+  policy:
+    ok_to_test:
+      - maintainers
+      - senior-engineers
+```
+
+**Use case:** External contributors (non-collaborators) submit a PR. By default, CI won't run for security reasons. A trusted team member can review the PR and comment:
+
+```
+/ok-to-test
+```
+
+This triggers the CI pipeline for that specific PR.
+
+**Related commands:**
+- `/ok-to-test` - Approve this PR to run CI
+- `/test` - Trigger specific tests (also requires authorization)
+- `/retest` - Re-run failed tests only
+
+<Warning>
+**Security Note:** Use `ok_to_test` carefully. Approving a malicious PR could expose secrets or compromise your infrastructure. Always review the code changes first.
+</Warning>
+
+## Priority and Precedence
+
+The `ok_to_test` policy takes **precedence** over `pull_request` policy:
+
+```yaml
+settings:
+  policy:
+    pull_request:
+      - developers  # 50 members
+    ok_to_test:
+      - leads       # 5 members
+```
+
+Scenario:
+1. External contributor submits PR - CI doesn't run
+2. Developer (in `developers` team) cannot approve - not in `ok_to_test`
+3. Lead (in `leads` team) comments `/ok-to-test` - CI runs
+4. Lead's authorization applies to that PR going forward
+
+## OWNERS File Integration
+
+The OWNERS file works alongside team policies:
+
+```yaml
+# OWNERS file in repository root
+approvers:
+  - alice
+  - bob
+reviewers:
+  - carol
+  - dave
+```
+
+**Authorization hierarchy:**
+
+1. **Repository owners/admins** - Always authorized
+2. **OWNERS file members** - Always authorized (both approvers and reviewers)
+3. **Team policy members** - Authorized if in specified teams
+4. **Organization members/collaborators** - Only if no policy is defined
+
+<Accordion title="Example: Combined OWNERS and Policy">
+```yaml
+# OWNERS file
+approvers:
+  - alice
+  - bob
+---
+# Repository CR
+settings:
+  policy:
+    pull_request:
+      - core-team
+    ok_to_test:
+      - alice  # Alice is in OWNERS, so this is redundant but explicit
+      - maintainers-team
+```
+
+**Who can do what:**
+- Alice, Bob: Can trigger CI on their PRs (OWNERS) AND approve external PRs (Alice is in ok_to_test)
+- Core-team members: Can trigger CI on their own PRs
+- Maintainers-team members: Can approve external contributor PRs
+- Others: Blocked unless they're repo owners
+</Accordion>
+
+## Use Cases and Examples
+
+<Accordion title="Open Source Project with External Contributors">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: oss-project
+spec:
+  url: "https://github.com/myorg/oss-project"
+  settings:
+    policy:
+      # Regular contributors can trigger CI on their PRs
+      pull_request:
+        - contributors
+        - committers
+      # Only maintainers can approve external contributor PRs
+      ok_to_test:
+        - maintainers
+```
+
+**Workflow:**
+1. Community member forks repo and submits PR
+2. CI doesn't run automatically (security)
+3. Maintainer reviews code
+4. Maintainer comments `/ok-to-test` if safe
+5. CI runs for that PR
+</Accordion>
+
+<Accordion title="Internal Project with Restricted CI">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: internal-api
+spec:
+  url: "https://github.com/myorg/internal-api"
+  settings:
+    policy:
+      # Only backend team can trigger CI
+      pull_request:
+        - backend-engineers
+      # Senior members can override for cross-team PRs
+      ok_to_test:
+        - backend-leads
+        - platform-team
+```
+
+**Scenario:** Frontend engineer needs to update API contract
+1. Frontend engineer submits PR
+2. CI blocked (not in backend-engineers team)
+3. Backend lead reviews and comments `/ok-to-test`
+4. CI runs for the PR
+</Accordion>
+
+<Accordion title="Staging vs Production Environments">
+```yaml
+# Staging repository - more permissive
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: app-staging
+spec:
+  url: "https://github.com/myorg/app"
+  settings:
+    policy:
+      pull_request:
+        - developers
+        - qa-team
+      ok_to_test:
+        - senior-developers
+---
+# Production repository - highly restricted
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: app-production
+spec:
+  url: "https://github.com/myorg/app"
+  settings:
+    policy:
+      pull_request:
+        - sre-team
+        - release-managers
+      ok_to_test:
+        - sre-leads
+```
+</Accordion>
+
+## GitOps Commands and Authorization
+
+Policy settings affect these GitOps commands:
+
+| Command | Requires | Description |
+|---------|----------|-------------|
+| `/test` | `ok_to_test` or PR author authorization | Run specified PipelineRuns |
+| `/retest` | `ok_to_test` or PR author authorization | Re-run failed PipelineRuns |
+| `/ok-to-test` | `ok_to_test` policy | Authorize external PR to run CI |
+| `/cancel` | PR author or ok_to_test | Cancel running PipelineRuns |
+
+**Example workflow:**
+
+```bash
+# External contributor's PR - no CI
+
+# Maintainer reviews and approves
+/ok-to-test
+
+# CI runs and fails on one test
+
+# Contributor pushes fix
+
+# Maintainer can retest specific pipeline
+/test integration-tests
+```
+
+## Team Name Resolution
+
+PAC queries the Git provider API to resolve team membership:
+
+**GitHub:**
+- Team names are case-insensitive
+- Use the team slug (URL-friendly name)
+- Teams must be in the organization that owns the repository
+- Subteams inherit parent team permissions
+
+**Forgejo/Gitea:**
+- Team names are case-sensitive
+- Use exact team name as shown in the organization settings
+- Teams must be in the organization that owns the repository
+
+<Note>
+Team membership is checked at the time of the event (PR creation, comment, push). Changes to team membership take effect immediately on the next event.
+</Note>
+
+## Troubleshooting
+
+<Accordion title="User in Team But Still Blocked">
+  **Possible causes:**
+  - Team name misspelled in Repository CR
+  - User not actually in the team (check Git provider)
+  - Team in wrong organization
+  - Team membership not synced yet
+  - Using team name instead of slug (GitHub)
+  
+  **Debug:**
+  ```bash
+  # Check team membership via GitHub API
+  curl -H "Authorization: token $GITHUB_TOKEN" \
+    https://api.github.com/orgs/my-org/teams/developers/members
+  ```
+</Accordion>
+
+<Accordion title="ok-to-test Comment Not Working">
+  **Possible causes:**
+  - Commenter not in `ok_to_test` team
+  - Typo in command (must be exactly `/ok-to-test`)
+  - Comment edited after posting (use new comment)
+  - PAC webhook not configured
+  
+  **Solution:**
+  - Verify commenter is in the team
+  - Check PAC controller logs for authorization errors
+  - Ensure webhook events include `issue_comment`
+</Accordion>
+
+<Accordion title="All Users Blocked Even Owners">
+  **Cause:** Repository owners and OWNERS file members should never be blocked
+  
+  **Check:**
+  - Verify user has admin/maintain role on repository
+  - Check if OWNERS file is in the correct location (repository root)
+  - Review PAC controller logs for policy evaluation
+</Accordion>
+
+<Accordion title="Policy Not Taking Effect">
+  **Possible causes:**
+  - Repository CR not in correct namespace
+  - Policy syntax error in YAML
+  - PAC controller not restarted after ConfigMap change
+  - Team doesn't exist in the organization
+  
+  **Verify:**
+  ```bash
+  kubectl get repository my-repo -n my-namespace -o yaml
+  kubectl logs -n pipelines-as-code deployment/pipelines-as-code-controller
+  ```
+</Accordion>
+
+## Security Best Practices
+
+1. **Principle of Least Privilege**: Only add teams that truly need access
+
+2. **Separate ok_to_test Teams**: Use a smaller, trusted team for `ok_to_test` than `pull_request`
+
+3. **Review Before Approving**: Always review code changes before commenting `/ok-to-test`
+
+4. **Use OWNERS Files**: Document trusted contributors in OWNERS files
+
+5. **Audit Team Membership**: Regularly review who's in authorized teams
+
+6. **Monitor Approvals**: Log and alert on `/ok-to-test` usage
+
+7. **Different Policies Per Environment**: Use stricter policies for production
+
+8. **Document Policies**: Maintain CONTRIBUTING.md explaining the authorization process
+
+## Limitations
+
+<Warning>
+**Current limitations:**
+- GitLab and Bitbucket do not support team-based policies
+- Team membership is cached briefly (may take 1-2 minutes to reflect changes)
+- Subteam inheritance behavior varies by provider
+- Cannot define policies per-branch (applies to entire repository)
+</Warning>
+
+## See Also
+
+- [GitOps Commands](/docs/guide/gitops_commands) - Using /ok-to-test and other commands
+- [Repository CRD](/docs/guide/repositorycrd) - Complete Repository configuration
+- [Running PipelineRuns](/docs/guide/running) - How PipelineRuns are triggered
+- [GitHub Teams](https://docs.github.com/en/organizations/organizing-members-into-teams) - GitHub team management

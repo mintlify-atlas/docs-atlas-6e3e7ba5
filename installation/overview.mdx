@@ -1,0 +1,186 @@
+---
+title: Installation Overview
+description: Learn about different methods to install Pipelines as Code on Kubernetes and OpenShift
+---
+
+# Installation Overview
+
+Pipelines as Code supports multiple installation methods depending on your platform and requirements. This guide will help you choose the right installation method for your environment.
+
+## Installation Methods
+
+Choose the installation method that best fits your platform:
+
+### OpenShift
+
+If you're running on OpenShift, you have two primary options:
+
+1. **Red Hat OpenShift Pipelines Operator** (Recommended)
+   - Automated installation and updates
+   - Integrated with OpenShift ecosystem
+   - Managed configuration through TektonConfig CR
+   - Default namespace: `openshift-pipelines`
+   - See [Installing on OpenShift](/installation/openshift)
+
+2. **Manual Installation**
+   - Direct control over deployment
+   - Suitable for custom configurations
+   - Requires manual updates
+
+### Kubernetes
+
+For standard Kubernetes clusters (including Minikube, Kind, GKE, EKS, AKS):
+
+1. **kubectl apply** (Recommended)
+   - Simple one-command installation
+   - Works on any Kubernetes 1.27+ cluster
+   - See [Installing on Kubernetes](/installation/kubernetes)
+
+2. **tkn pac bootstrap**
+   - Interactive CLI-guided setup
+   - Includes optional webhook forwarder for local development
+   - Automatically configures Git providers
+
+## Prerequisites
+
+Before installing Pipelines as Code, ensure you have the following:
+
+<Steps>
+  <Step title="Kubernetes Cluster">
+    A running Kubernetes cluster version 1.27 or higher, or an OpenShift cluster.
+  </Step>
+  
+  <Step title="Tekton Pipelines">
+    Tekton Pipelines version 0.50.0 or higher must be installed on your cluster.
+  </Step>
+  
+  <Step title="CLI Tools">
+    - `kubectl` for cluster access
+    - Optional: `tkn` CLI for Tekton operations
+    - Optional: `tkn-pac` CLI for Pipelines as Code operations
+  </Step>
+  
+  <Step title="Git Provider">
+    Access to one of the supported Git providers:
+    - GitHub (GitHub App or Webhook)
+    - GitLab (Webhook)
+    - Bitbucket Cloud/Data Center (Webhook)
+    - Forgejo (Webhook) - Tech Preview
+  </Step>
+</Steps>
+
+For detailed prerequisites and version requirements, see [Prerequisites and Requirements](/installation/requirements).
+
+## Installation Workflow
+
+The typical installation workflow consists of:
+
+<Steps>
+  <Step title="Install Prerequisites">
+    Ensure your cluster meets the [requirements](/installation/requirements) and install Tekton Pipelines if not already present.
+  </Step>
+  
+  <Step title="Install Pipelines as Code">
+    Choose your installation method:
+    - [Kubernetes Installation](/installation/kubernetes)
+    - [OpenShift Installation](/installation/openshift)
+  </Step>
+  
+  <Step title="Configure Ingress/Route">
+    Set up external access to the Pipelines as Code controller:
+    - **OpenShift**: Route is automatically created
+    - **Kubernetes**: Configure an Ingress or use a webhook forwarder
+  </Step>
+  
+  <Step title="Configure Git Provider">
+    Set up integration with your Git provider (GitHub App, webhooks, etc.).
+  </Step>
+  
+  <Step title="Create Repository CR">
+    Create Repository custom resources to connect your Git repositories to Pipelines as Code.
+  </Step>
+</Steps>
+
+## Version Information
+
+<Note>
+  The installation commands on this site reference the `stable` branch, which points to the latest stable release. For the latest development version, replace `stable` with `nightly` in the URLs.
+</Note>
+
+### Stable Release
+
+Install the latest stable version:
+
+<CodeGroup>
+```bash OpenShift
+kubectl apply -f https://raw.githubusercontent.com/openshift-pipelines/pipelines-as-code/stable/release.yaml
+```
+
+```bash Kubernetes
+kubectl apply -f https://raw.githubusercontent.com/openshift-pipelines/pipelines-as-code/stable/release.k8s.yaml
+```
+</CodeGroup>
+
+### Nightly Release
+
+Install the latest development version:
+
+<CodeGroup>
+```bash OpenShift
+kubectl apply -f https://raw.githubusercontent.com/openshift-pipelines/pipelines-as-code/nightly/release.yaml
+```
+
+```bash Kubernetes
+kubectl apply -f https://raw.githubusercontent.com/openshift-pipelines/pipelines-as-code/nightly/release.k8s.yaml
+```
+</CodeGroup>
+
+<Warning>
+  The nightly release contains the latest development changes and may be unstable. Use stable releases for production environments.
+</Warning>
+
+## What Gets Installed
+
+When you install Pipelines as Code, the following components are deployed:
+
+### Namespace
+
+- **Namespace**: `pipelines-as-code`
+- This namespace hosts the Pipelines as Code infrastructure and should be accessible only to cluster administrators
+
+### Core Components
+
+1. **Controller**: Manages Repository CRDs, processes Git events, and creates PipelineRuns
+2. **Webhook**: Validates and mutates Pipelines as Code custom resources
+3. **Watcher**: Monitors PipelineRun status and reports back to Git providers
+
+### Custom Resources
+
+- **Repository CRD**: Defines the connection between Git repositories and namespaces
+- Configuration stored in ConfigMaps and Secrets
+
+### RBAC
+
+Cluster roles and role bindings for:
+- Controller service account permissions
+- User permissions to create Repository CRDs
+- Webhook admission control
+
+## Next Steps
+
+After understanding the installation options:
+
+1. Review the [Prerequisites and Requirements](/installation/requirements)
+2. Follow the installation guide for your platform:
+   - [Kubernetes Installation](/installation/kubernetes)
+   - [OpenShift Installation](/installation/openshift)
+3. Configure your Git provider integration
+4. Create your first Repository CR and pipeline
+
+## Getting Help
+
+If you encounter issues during installation:
+
+- Check the [Troubleshooting Guide](/troubleshooting)
+- Visit [GitHub Discussions](https://github.com/openshift-pipelines/pipelines-as-code/discussions)
+- Join the `#pipelinesascode` channel on [Tekton Slack](https://tektoncd.slack.com/)

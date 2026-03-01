@@ -1,0 +1,549 @@
+---
+title: Pipeline and Task Resolution
+description: Understand how Pipelines-as-Code resolves and bundles tasks and pipelines from various sources
+---
+
+## Overview
+
+The Pipelines-as-Code resolver automatically bundles your PipelineRuns with all their dependencies (Tasks and Pipelines) into a single, self-contained PipelineRun before execution. This ensures reproducibility and eliminates external dependencies at runtime.
+
+<Info>
+The PAC resolver is different from [Tekton Resolvers](https://tekton.dev/docs/pipelines/resolution-getting-started/). Both are compatible and can be used together.
+</Info>
+
+## How Resolution Works
+
+<Steps>
+
+### Scan .tekton Directory
+
+PAC scans all `.yaml` and `.yml` files in `.tekton/` and subdirectories.
+
+### Detect Resources
+
+Identifies Tekton resources: PipelineRun, Pipeline, Task.
+
+### Resolve Dependencies
+
+For each PipelineRun:
+1. Inline referenced Tasks from annotations or `.tekton/`
+2. Fetch remote Tasks from URLs or hubs
+3. Bundle Pipeline if using `pipelineRef`
+
+### Transform Names
+
+Converts `metadata.name` to `metadata.generateName` for uniqueness.
+
+### Submit to Cluster
+
+Creates the complete, self-contained PipelineRun.
+
+</Steps>
+
+## What Gets Resolved
+
+PAC resolves:
+
+<Tabs>
+<Tab title="Resolved">
+- Tasks referenced by `taskRef.name` in `.tekton/`
+- Tasks from remote URLs (annotations)
+- Tasks from Artifact Hub / Tekton Hub
+- Pipelines from remote URLs (annotations)
+- Pipelines from Artifact Hub
+- Tasks in subdirectories of `.tekton/`
+</Tab>
+
+<Tab title="Not Resolved (Used As-Is)">
+- ClusterTasks
+- Tekton Bundles
+- Tekton Resolvers (`resolver: hub`, `resolver: git`, etc.)
+- Custom Tasks (non-`tekton.dev` apiVersion)
+- Embedded `taskSpec`
+</Tab>
+</Tabs>
+
+<Warning>
+If PAC cannot resolve a referenced task, the run fails **before** submission to the cluster. Check namespace events and PAC controller logs.
+</Warning>
+
+## Remote Task Annotations
+
+Fetch tasks from remote sources using annotations on PipelineRuns or Pipelines.
+
+### Artifact Hub (Default)
+
+Fetch tasks from [Artifact Hub](https://artifacthub.io/packages/search?kind=7&kind=11):
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/task: "git-clone"
+```
+
+**Multiple tasks**:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/task: "[git-clone, golang-test, tkn]"
+```
+
+**Multiple lines**:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/task: "git-clone"
+  pipelinesascode.tekton.dev/task-1: "golang-test"
+  pipelinesascode.tekton.dev/task-2: "tkn"
+```
+
+**Specific version**:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/task: "git-clone:0.9.0"
+```
+
+### Custom Hub Catalogs
+
+Cluster admins can configure custom hubs. Reference them with the catalog name:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/task: "[customcatalog://curl]"
+```
+
+<Info>
+No fallback between hubs. If a task isn't found in the specified hub, the run fails.
+</Info>
+
+### Remote HTTP URLs
+
+Fetch tasks from any HTTP/HTTPS URL:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/task: "[https://example.com/tasks/my-task.yaml]"
+```
+
+### Private Repository URLs
+
+<Tabs>
+<Tab title="GitHub">
+Use GitHub blob URLs:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/task: "[https://github.com/org/repo/blob/main/tasks/task.yaml]"
+```
+
+PAC uses the GitHub App token or webhook token to fetch the file.
+
+**Branch with slash**: HTML-encode `/` as `%2F`:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/task: "[https://github.com/org/repo/blob/feature%2Fbranch/tasks/task.yaml]"
+```
+
+**Token Scoping**:
+- **GitHub App**: Scoped to the owner/organization by default
+- **Webhook**: Token permissions from the personal access token
+- Configure `secret-github-app-token-scoped` and `secret-github-app-scope-extra-repos` in ConfigMap to extend scope
+
+See [Repository CRD - GitHub Token Scoping](/guides/repository-crd#github-token-scoping) for details.
+</Tab>
+
+<Tab title="GitLab">
+Use GitLab blob or raw URLs:
+
+```yaml
+annotations:
+  # Blob URL
+  pipelinesascode.tekton.dev/task: "[https://gitlab.com/org/repo/-/blob/main/tasks/task.yaml]"
+  
+  # Raw URL
+  pipelinesascode.tekton.dev/task: "[https://gitlab.com/org/repo/-/raw/main/tasks/task.yaml]"
+```
+
+PAC uses the GitLab token from the Repository CR.
+</Tab>
+</Tabs>
+
+### Tasks from Current Repository
+
+Reference tasks within your repository by path:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/task: "[.tekton/tasks/custom-task.yaml]"
+  pipelinesascode.tekton.dev/task-1: "[shared/tasks/build.yaml]"
+```
+
+Paths are relative to the repository root and fetched from the event's SHA.
+
+## Remote Pipeline Annotations
+
+Share pipelines across repositories using remote pipeline annotations.
+
+<Warning>
+Only **one** `pipelinesascode.tekton.dev/pipeline` annotation is allowed per PipelineRun. Suffixes like `pipeline-1` are not supported.
+</Warning>
+
+### Remote URL
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/pipeline: "https://git.example.com/raw/pipeline.yaml"
+```
+
+### Artifact Hub
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/pipeline: "buildpacks"
+  # Or with version
+  pipelinesascode.tekton.dev/pipeline: "buildpacks:0.1"
+```
+
+### Custom Hub
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/pipeline: "[customcatalog://buildpacks:0.1]"
+```
+
+### Pipeline from Current Repository
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/pipeline: "pipelines/my-pipeline.yaml"
+```
+
+## Relative Task Resolution
+
+When a remote pipeline references tasks, PAC resolves them relative to the pipeline's location.
+
+**Example Setup**:
+
+**Repository A** (event source):
+
+```yaml .tekton/pipelinerun.yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: hello-world
+  annotations:
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/pipeline: "https://github.com/user/repo-b/blob/main/pipeline.yaml"
+spec:
+  pipelineRef:
+    name: hello-world
+```
+
+**Repository B**:
+
+```yaml pipeline.yaml
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: hello-world
+  annotations:
+    pipelinesascode.tekton.dev/task: "./task.yaml"  # Relative to pipeline.yaml
+spec:
+  tasks:
+    - name: say-hello
+      taskRef:
+        name: hello
+```
+
+```yaml task.yaml
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: hello
+spec:
+  steps:
+    - name: echo
+      image: alpine
+      script: |
+        #!/bin/sh
+        echo "Hello, World!"
+```
+
+**Resolution**:
+1. PAC fetches `pipeline.yaml` from Repository B
+2. Sees `./task.yaml` annotation
+3. Resolves relative to `pipeline.yaml` location: `https://github.com/user/repo-b/blob/main/task.yaml`
+4. Fetches and inlines the task
+
+<Info>
+Relative paths like `../task.yaml` are supported. If the pipeline is at `/foo/bar/pipeline.yaml` and the task path is `../task.yaml`, PAC assembles `/foo/task.yaml`.
+</Info>
+
+## Task Override from Remote Pipeline
+
+Override tasks from a remote pipeline by defining a task with the same name in the PipelineRun annotations.
+
+**Remote Pipeline** at `https://example.com/pipeline.yaml`:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: shared-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/task: "git-clone"  # From Artifact Hub
+spec:
+  tasks:
+    - name: clone
+      taskRef:
+        name: git-clone
+```
+
+**User PipelineRun**:
+
+```yaml .tekton/pull-request.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: my-run
+  annotations:
+    pipelinesascode.tekton.dev/pipeline: "https://example.com/pipeline.yaml"
+    pipelinesascode.tekton.dev/task: "./my-custom-git-clone.yaml"  # Overrides git-clone
+spec:
+  pipelineRef:
+    name: shared-pipeline
+```
+
+**`./my-custom-git-clone.yaml`**:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: git-clone  # Same name as the remote task
+spec:
+  # Custom implementation
+```
+
+**Result**: PAC uses `./my-custom-git-clone.yaml` instead of the Artifact Hub `git-clone` task.
+
+<Warning>
+Only tasks referenced by `taskRef.name` can be overridden. Tasks embedded with `taskSpec` cannot be overridden.
+</Warning>
+
+## Task and Pipeline Precedence
+
+When multiple sources define the same task/pipeline name, PAC uses this precedence:
+
+### Task Precedence
+
+1. **PipelineRun annotations**: `pipelinesascode.tekton.dev/task`
+2. **Remote Pipeline annotations**: `pipelinesascode.tekton.dev/task` on the pipeline
+3. **`.tekton/` directory**: Tasks automatically fetched from `.tekton/` and subdirectories
+
+### Pipeline Precedence
+
+1. **PipelineRun annotations**: `pipelinesascode.tekton.dev/pipeline`
+2. **`.tekton/` directory**: Pipelines automatically fetched from `.tekton/` and subdirectories
+
+## Testing Resolution Locally
+
+Test your PipelineRun resolution before pushing to Git:
+
+```bash
+tkn pac resolve -f .tekton/pull-request.yaml
+```
+
+This simulates the resolution process and shows:
+- Resolved tasks
+- Fetched remote resources
+- Final bundled PipelineRun YAML
+
+**Example output**:
+
+```bash
+$ tkn pac resolve -f .tekton/pull-request.yaml
+Resolving PipelineRun: pull-request
+✓ Fetched task 'git-clone' from Artifact Hub
+✓ Fetched task 'golang-test' from https://example.com/tasks/test.yaml
+✓ Resolved PipelineRun with 2 tasks
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: pull-request-
+spec:
+  pipelineSpec:
+    tasks:
+      - name: fetch-repository
+        taskSpec:
+          # Inlined git-clone task
+```
+
+## Complete Examples
+
+### Multi-Source Task Resolution
+
+```yaml .tekton/pr.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: multi-source
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    # Task from Artifact Hub
+    pipelinesascode.tekton.dev/task: "git-clone:0.9.0"
+    # Task from custom catalog
+    pipelinesascode.tekton.dev/task-1: "[customcatalog://security-scan]"
+    # Task from remote URL
+    pipelinesascode.tekton.dev/task-2: "[https://example.com/tasks/notify.yaml]"
+    # Task from current repo
+    pipelinesascode.tekton.dev/task-3: "[.tekton/tasks/custom-build.yaml]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: fetch
+        taskRef:
+          name: git-clone
+      - name: scan
+        taskRef:
+          name: security-scan
+      - name: build
+        taskRef:
+          name: custom-build
+      - name: notify
+        taskRef:
+          name: notify
+  workspaces:
+    - name: source
+      emptyDir: {}
+```
+
+### Remote Pipeline with Local Override
+
+```yaml .tekton/custom-run.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: custom-run
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    # Use shared pipeline from another repo
+    pipelinesascode.tekton.dev/pipeline: "https://github.com/org/shared-pipelines/blob/main/ci.yaml"
+    # Override the 'test' task with local version
+    pipelinesascode.tekton.dev/task: "[.tekton/tasks/test.yaml]"
+spec:
+  pipelineRef:
+    name: ci  # Name from the remote pipeline
+  params:
+    - name: repo-url
+      value: "{{ repo_url }}"
+    - name: revision
+      value: "{{ revision }}"
+```
+
+### Monorepo with Shared Tasks
+
+```
+monorepo/
+├── .tekton/
+│   ├── tasks/           # Shared tasks
+│   │   ├── build.yaml
+│   │   ├── test.yaml
+│   │   └── deploy.yaml
+│   ├── service-a.yaml  # PipelineRun for service A
+│   └── service-b.yaml  # PipelineRun for service B
+├── service-a/
+└── service-b/
+```
+
+**`.tekton/service-a.yaml`**:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: service-a-ci
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-path-change: "[service-a/**]"
+    # Automatically resolves from .tekton/tasks/
+spec:
+  pipelineSpec:
+    tasks:
+      - name: build
+        taskRef:
+          name: build  # Resolved from .tekton/tasks/build.yaml
+      - name: test
+        taskRef:
+          name: test   # Resolved from .tekton/tasks/test.yaml
+```
+
+PAC automatically finds and inlines tasks from `.tekton/tasks/`.
+
+## Troubleshooting
+
+### Task not found
+
+```text
+failed to resolve task 'my-task': task not found in annotations, remote pipeline, or .tekton directory
+```
+
+**Solutions**:
+1. Verify task name matches exactly (case-sensitive)
+2. Check task exists in `.tekton/` or subdirectories
+3. Ensure annotation syntax is correct: `"[task-name]"`
+4. Test locally: `tkn pac resolve -f .tekton/pr.yaml`
+
+### Remote URL fetch failure
+
+```text
+failed to fetch remote task from https://example.com/task.yaml: 404 Not Found
+```
+
+**Solutions**:
+1. Verify URL is accessible
+2. Check authentication (GitHub/GitLab tokens)
+3. For private repos, ensure token has read permissions
+4. For GitHub, use blob URLs: `/blob/main/` not `/tree/main/`
+
+### Hub task version not found
+
+```text
+task 'git-clone:9.9.9' not found in Artifact Hub
+```
+
+**Solutions**:
+1. Check available versions: [Artifact Hub - git-clone](https://artifacthub.io/packages/tekton-task/tekton-catalog-tasks/git-clone)
+2. Use latest version or omit version: `"git-clone"`
+3. Verify custom hub catalog is configured correctly
+
+### Circular dependency
+
+```text
+circular dependency detected: pipeline A references pipeline B, which references pipeline A
+```
+
+**Solution**: Restructure pipelines to avoid circular references.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Pipelines" icon="code" href="/guides/creating-pipelines">
+    Author PipelineRuns with dynamic variables
+  </Card>
+  <Card title="Event Matching" icon="filter" href="/guides/event-matching">
+    Match pipelines to specific events and file changes
+  </Card>
+  <Card title="Running Pipelines" icon="play" href="/guides/running-pipelines">
+    Execute and monitor PipelineRuns
+  </Card>
+  <Card title="Repository CRD" icon="database" href="/guides/repository-crd">
+    Configure GitHub token scoping for multi-repo access
+  </Card>
+</CardGroup>

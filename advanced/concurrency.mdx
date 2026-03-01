@@ -1,0 +1,509 @@
+---
+title: Concurrency Management
+description: Control the number of concurrent PipelineRuns with concurrency limits and queuing
+---
+
+## Overview
+
+Pipelines-as-Code provides concurrency control to limit the number of PipelineRuns that can execute simultaneously for a repository. This prevents resource exhaustion when multiple events trigger pipelines at the same time.
+
+## Configuration
+
+### Repository-Level Concurrency Limit
+
+Set `concurrency_limit` in the Repository CR to define the maximum number of concurrent PipelineRuns:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+  namespace: my-namespace
+spec:
+  url: "https://github.com/owner/repo"
+  concurrency_limit: 3
+```
+
+<ParamField path="concurrency_limit" type="integer" required={false}>
+  Maximum number of PipelineRuns that can run concurrently for this repository.
+  
+  - **Minimum value:** 1
+  - **Default:** No limit (all matching PipelineRuns start immediately)
+  - **Applies to:** All PipelineRuns triggered by events in this repository
+</ParamField>
+
+## How It Works
+
+When a Git event triggers multiple PipelineRuns:
+
+1. **Without concurrency limit**: All PipelineRuns start immediately
+2. **With concurrency limit**: 
+   - Up to `concurrency_limit` PipelineRuns start immediately
+   - Remaining PipelineRuns are queued
+   - Queued PipelineRuns start as running ones complete
+   - PipelineRuns execute in **alphabetical order by name**
+
+### Execution Order
+
+PipelineRuns are started in alphabetical order:
+
+```yaml
+# .tekton directory contains:
+# - a-unit-tests.yaml
+# - b-integration-tests.yaml  
+# - c-e2e-tests.yaml
+# - d-security-scan.yaml
+```
+
+With `concurrency_limit: 2`:
+
+1. `a-unit-tests` and `b-integration-tests` start immediately
+2. `c-e2e-tests` and `d-security-scan` are queued
+3. When `a-unit-tests` completes, `c-e2e-tests` starts
+4. When `b-integration-tests` completes, `d-security-scan` starts
+
+<Note>
+Use alphabetical naming (e.g., `01-`, `02-`, etc.) to control execution order when using concurrency limits.
+</Note>
+
+## Use Cases
+
+<Accordion title="Resource-Constrained Clusters">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: resource-heavy-builds
+spec:
+  url: "https://github.com/myorg/heavy-app"
+  # Each build uses 8GB memory, cluster has 32GB total
+  concurrency_limit: 3
+```
+
+Prevents out-of-memory errors by limiting concurrent memory-intensive builds.
+</Accordion>
+
+<Accordion title="Cost Optimization">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: cloud-native-app
+spec:
+  url: "https://github.com/myorg/app"
+  # Limit concurrent cloud resource usage
+  concurrency_limit: 2
+```
+
+Reduces cloud costs by limiting the number of expensive resources (VMs, build machines) running simultaneously.
+</Accordion>
+
+<Accordion title="Ordered Execution for Monorepo">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: monorepo
+spec:
+  url: "https://github.com/myorg/monorepo"
+  # Ensure critical pipelines run first
+  concurrency_limit: 1
+```
+
+With naming like:
+- `01-lint.yaml`
+- `02-unit-tests.yaml`
+- `03-integration-tests.yaml`
+- `04-build.yaml`
+
+Ensures strict sequential execution.
+</Accordion>
+
+<Accordion title="External Service Rate Limiting">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: api-integration
+spec:
+  url: "https://github.com/myorg/api-client"
+  # External API limits to 3 concurrent requests
+  concurrency_limit: 3
+```
+
+Prevents overwhelming external services with too many concurrent requests.
+</Accordion>
+
+## Example: Pull Request with Multiple Pipelines
+
+Given this `.tekton` directory:
+
+```bash
+.tekton/
+├── lint.yaml
+├── unit-tests.yaml
+└── integration-tests.yaml
+```
+
+Each file contains a PipelineRun matching on `pull_request` events.
+
+**Without concurrency limit:**
+
+```yaml
+spec:
+  url: "https://github.com/owner/repo"
+```
+
+When a PR is opened: All 3 PipelineRuns start immediately.
+
+**With concurrency limit:**
+
+```yaml
+spec:
+  url: "https://github.com/owner/repo"
+  concurrency_limit: 1
+```
+
+When a PR is opened:
+1. `integration-tests` starts (alphabetically first)
+2. `lint` is queued
+3. `unit-tests` is queued
+4. When `integration-tests` completes, `lint` starts
+5. When `lint` completes, `unit-tests` starts
+
+## Queue Behavior
+
+### Queued PipelineRun States
+
+- **Running**: Currently executing (up to `concurrency_limit`)
+- **Pending**: Queued, waiting for a slot (shown with Pending status)
+- **Unknown**: May appear briefly during state transitions
+
+### Viewing Queue Status
+
+```bash
+# List all PipelineRuns for a repository
+kubectl get pipelineruns -n my-namespace -l pipelinesascode.tekton.dev/repository=my-repo
+
+NAME                          STATUS      STARTTIME   COMPLETIONTIME
+lint-pr-123-abc               Running     2m ago
+unit-tests-pr-123-def         Pending     2m ago
+integration-tests-pr-123-ghi  Pending     2m ago
+```
+
+### Queue Skipping
+
+PAC skips PipelineRuns in these states when checking the queue:
+- **Running**: Actively executing
+- **Pending**: Waiting in queue
+
+PAC **does not skip** PipelineRuns with **Unknown** status, which may cause them to be counted against the concurrency limit until their state is resolved.
+
+## Global vs Repository Configuration
+
+Concurrency can be configured at two levels:
+
+### Repository Level (Recommended)
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+spec:
+  url: "https://github.com/owner/repo"
+  concurrency_limit: 2
+```
+
+Applies only to this specific repository.
+
+### Global Level (via ConfigMap)
+
+Configure a default for all repositories:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+data:
+  default-concurrency-limit: "5"
+```
+
+Repository-level settings override global defaults.
+
+## Interaction with Other Features
+
+### Concurrency + cancel-in-progress
+
+<Warning>
+Concurrency limits **cannot** be used together with the `cancel-in-progress` annotation.
+</Warning>
+
+This annotation automatically cancels in-progress runs when a new commit is pushed:
+
+```yaml
+metadata:
+  annotations:
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+```
+
+If you enable both:
+- `cancel-in-progress` takes precedence
+- `concurrency_limit` is ignored
+- You'll see a warning in the PAC controller logs
+
+See [Running PipelineRuns](/docs/guide/running#canceling-a-pipelinerun) for more details.
+
+### Concurrency + max-keep-runs
+
+These features work together:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+spec:
+  url: "https://github.com/owner/repo"
+  concurrency_limit: 3
+```
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: build-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "10"
+spec:
+  # ...
+```
+
+- `concurrency_limit`: Controls how many run **simultaneously**
+- `max-keep-runs`: Controls how many completed runs are **retained**
+
+See [Cleanup](/docs/advanced/cleanup) for retention policies.
+
+## Kubernetes-Native Queueing with Kueue
+
+For more advanced queueing scenarios, PAC integrates with [Kueue](https://kueue.sigs.k8s.io/):
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+  annotations:
+    kueue.x-k8s.io/queue-name: user-queue
+spec:
+  url: "https://github.com/owner/repo"
+```
+
+Kueue provides:
+- Fair-sharing between multiple repositories
+- Priority-based scheduling
+- Resource quotas and preemption
+- Integration with cluster autoscaling
+
+<Note>
+**Experimental:** Kueue integration via [konflux-ci/tekton-kueue](https://github.com/konflux-ci/tekton-kueue) is for testing only and not recommended for production.
+</Note>
+
+## Troubleshooting
+
+<Accordion title="PipelineRuns Stay Pending Forever">
+  **Possible causes:**
+  - Another PipelineRun is stuck in Running state
+  - Concurrency limit set too low
+  - Cluster resource constraints preventing execution
+  
+  **Debug:**
+  ```bash
+  # Check currently running PipelineRuns
+  kubectl get pr -n my-namespace -l pipelinesascode.tekton.dev/repository=my-repo --field-selector=status.conditions[0].type=Succeeded,status.conditions[0].status=Unknown
+  
+  # Check for resource constraints
+  kubectl describe pr <stuck-pipelinerun>
+  ```
+</Accordion>
+
+<Accordion title="PipelineRuns Execute Out of Order">
+  **Cause:** PipelineRuns are executed in alphabetical order by name
+  
+  **Solution:** Use prefixes to control order:
+  ```bash
+  .tekton/
+  ├── 01-lint.yaml
+  ├── 02-test.yaml
+  └── 03-build.yaml
+  ```
+</Accordion>
+
+<Accordion title="Concurrency Limit Not Applied">
+  **Possible causes:**
+  - `concurrency_limit` not set in Repository CR
+  - Typo in field name (check YAML)
+  - Repository CR not in correct namespace
+  - Using `cancel-in-progress` annotation
+  
+  **Verify:**
+  ```bash
+  kubectl get repository my-repo -n my-namespace -o jsonpath='{.spec.concurrency_limit}'
+  ```
+</Accordion>
+
+<Accordion title="Too Many PipelineRuns Running">
+  **Cause:** Concurrency limit applies per Repository, not globally
+  
+  **Example:** 3 repositories each with `concurrency_limit: 5` = up to 15 total concurrent runs
+  
+  **Solution:** 
+  - Reduce per-repository limits
+  - Use global ConfigMap default
+  - Implement Kueue for cluster-wide quotas
+</Accordion>
+
+## Best Practices
+
+1. **Start Conservative**: Begin with low limits and increase based on monitoring
+
+2. **Monitor Resource Usage**: Track CPU, memory, and storage to determine optimal limits
+
+3. **Name for Order**: Use numerical prefixes when execution order matters:
+   ```
+   01-lint
+   02-unit-test
+   03-integration-test
+   ```
+
+4. **Consider Dependencies**: If pipelines depend on each other, use `concurrency_limit: 1`
+
+5. **Different Limits per Repo**: Heavy builds might need `limit: 1`, light tests can use `limit: 5`
+
+6. **Document Limits**: Add comments explaining why specific limits were chosen
+
+7. **Test Queue Behavior**: Manually trigger multiple pipelines to verify queueing works as expected
+
+8. **Alert on Long Queues**: Monitor Pending PipelineRuns and alert if queues grow too large
+
+## Performance Considerations
+
+<Accordion title="High Concurrency (No Limit)">
+  **Pros:**
+  - Fastest feedback for developers
+  - No waiting in queue
+  
+  **Cons:**
+  - May overwhelm cluster resources
+  - Higher cloud costs
+  - Risk of resource exhaustion
+  
+  **Best for:** Small pipelines, large clusters, unlimited cloud resources
+</Accordion>
+
+<Accordion title="Medium Concurrency (limit: 3-5)">
+  **Pros:**
+  - Balanced resource usage
+  - Predictable costs
+  - Still provides reasonable feedback time
+  
+  **Cons:**
+  - Some queueing during high activity
+  - Requires capacity planning
+  
+  **Best for:** Most production scenarios
+</Accordion>
+
+<Accordion title="Low Concurrency (limit: 1-2)">
+  **Pros:**
+  - Minimal resource usage
+  - Strict cost control
+  - Ensures execution order
+  
+  **Cons:**
+  - Longest wait times
+  - Can bottleneck development
+  
+  **Best for:** Resource-constrained environments, sequential dependencies
+</Accordion>
+
+## Example Configurations
+
+<Accordion title="Multi-Stage Pipeline with Dependencies">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: staged-pipeline
+spec:
+  url: "https://github.com/myorg/app"
+  # Ensure stages run in order
+  concurrency_limit: 1
+```
+
+```bash
+# .tekton/ directory structure
+01-validate.yaml    # Quick validation
+02-build.yaml       # Build artifacts
+03-test.yaml        # Run tests against build
+04-deploy.yaml      # Deploy to staging
+```
+</Accordion>
+
+<Accordion title="Large Monorepo with Multiple Teams">
+```yaml
+# Team A - Heavy builds
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: team-a-service
+spec:
+  url: "https://github.com/myorg/monorepo"
+  concurrency_limit: 2
+---
+# Team B - Lightweight tests  
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: team-b-service
+spec:
+  url: "https://github.com/myorg/monorepo"
+  concurrency_limit: 5
+```
+</Accordion>
+
+<Accordion title="Cost-Optimized Cloud Builds">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: cloud-builds
+spec:
+  url: "https://github.com/myorg/app"
+  # Each build spins up expensive cloud VMs
+  concurrency_limit: 1
+```
+
+```yaml
+# PipelineRun with expensive resources
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: cloud-build
+spec:
+  taskRunTemplate:
+    podTemplate:
+      nodeSelector:
+        cloud.google.com/gke-nodepool: expensive-pool
+  # ...
+```
+</Accordion>
+
+## See Also
+
+- [Repository CRD](/docs/guide/repositorycrd) - Complete Repository configuration reference
+- [Cleanup](/docs/advanced/cleanup) - Automatic cleanup and retention policies  
+- [Running PipelineRuns](/docs/guide/running) - How PipelineRuns are triggered and managed
+- [Kueue Documentation](https://kueue.sigs.k8s.io/) - Advanced Kubernetes-native job queueing

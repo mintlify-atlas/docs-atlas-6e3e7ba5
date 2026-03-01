@@ -1,0 +1,349 @@
+---
+title: Forgejo/Gitea Setup
+description: Configure Pipelines as Code with Forgejo or Gitea for self-hosted Git repository integration
+---
+
+# Forgejo/Gitea Setup
+
+<Note>
+**Technology Preview**
+
+Forgejo support in Pipelines as Code is in technology preview. Features may change as the integration matures.
+</Note>
+
+Pipelines as Code supports [Forgejo](https://forgejo.org), a community-driven Git forge that originated as a fork of Gitea. The integration also works with Gitea installations.
+
+## Overview
+
+Forgejo is supported as a first-class provider type:
+- Use `type: "forgejo"` in your Repository CRD configuration
+- Legacy `type: "gitea"` is kept as an alias for backwards compatibility
+
+## Prerequisites
+
+Before starting, ensure you have [installed Pipelines as Code](/docs/install/installation) on your Kubernetes cluster.
+
+## Create Personal Access Token
+
+Create a personal access token for Pipelines as Code to interact with Forgejo.
+
+<Steps>
+  <Step title="Navigate to Applications settings">
+    Go to: `https://your.forgejo.domain/user/settings/applications`
+    
+    Or navigate manually:
+    1. Click your profile icon
+    2. Go to **Settings** > **Applications**
+  </Step>
+  
+  <Step title="Generate new token">
+    In the **Manage Access Tokens** section:
+    1. Enter a token name: `pipelines-as-code-token`
+    2. Select permissions (see below)
+    3. Click **Generate Token**
+  </Step>
+  
+  <Step title="Configure required scopes">
+    **Required Scopes** (necessary for basic functionality):
+    
+    - **Repository (Write)** - For setting commit status and reading repository contents
+    - **Issue (Write)** - For creating and editing comments on pull requests
+  </Step>
+  
+  <Step title="Configure optional scopes">
+    **Optional Scopes**:
+    
+    - **Organization (Read)** - Only required if using team-based policies
+    
+    <Note>
+    Most users only need the required scopes. Add Organization (Read) only if you plan to use `policy.team_ids` in your Repository CRD to restrict pipeline triggers based on Forgejo organization team membership.
+    </Note>
+  </Step>
+  
+  <Step title="Save the token">
+    Copy and securely store the generated token. You won't be able to view it again.
+  </Step>
+</Steps>
+
+## Configure Webhook
+
+<Warning>
+**Manual Configuration Required**
+
+The `tkn pac create repo` and `tkn pac webhook` commands do not currently support Forgejo. You must configure the webhook manually.
+</Warning>
+
+<Steps>
+  <Step title="Get controller URL">
+    On OpenShift:
+    ```bash
+    echo https://$(oc get route -n pipelines-as-code pipelines-as-code-controller -o jsonpath='{.spec.host}')
+    ```
+    
+    For other Kubernetes distributions, retrieve the public URL from your ingress controller.
+  </Step>
+  
+  <Step title="Generate webhook secret">
+    Generate a secure random secret:
+    ```bash
+    head -c 30 /dev/random | base64
+    ```
+    
+    <Note>You can also configure an empty webhook secret if your Forgejo instance is behind a firewall.</Note>
+  </Step>
+  
+  <Step title="Create webhook in Forgejo">
+    1. Navigate to your repository in Forgejo
+    2. Go to **Settings** > **Webhooks**
+    3. Click **Add Webhook** > **Forgejo**
+    4. Configure the webhook:
+       - **HTTP Method**: POST
+       - **POST Content Type**: application/json
+       - **Target URL**: Your Pipelines as Code controller URL
+       - **Secret**: The secret you generated (or leave empty)
+    5. Select trigger events (see below)
+    6. Click **Add Webhook**
+  </Step>
+  
+  <Step title="Select webhook events">
+    Click "Choose events" and select:
+    
+    **Repository events:**
+    - Push
+    
+    **Pull request events:**
+    - Opened
+    - Reopened  
+    - Synchronized
+    - Label updated
+    - Closed
+    
+    **Issue events:**
+    - Comments (only comments on open pull requests are processed)
+  </Step>
+</Steps>
+
+## Create Repository CRD
+
+<Steps>
+  <Step title="Create Kubernetes secret">
+    Create a secret with the personal token and webhook secret:
+    
+    With webhook secret:
+    ```bash
+    kubectl -n target-namespace create secret generic forgejo-webhook-config \
+      --from-literal provider.token="TOKEN_AS_GENERATED_PREVIOUSLY" \
+      --from-literal webhook.secret="SECRET_AS_SET_IN_WEBHOOK_CONFIGURATION"
+    ```
+    
+    With empty webhook secret:
+    ```bash
+    kubectl -n target-namespace create secret generic forgejo-webhook-config \
+      --from-literal provider.token="TOKEN_AS_GENERATED_PREVIOUSLY" \
+      --from-literal webhook.secret=""
+    ```
+  </Step>
+  
+  <Step title="Create Repository CRD">
+    ```yaml
+    ---
+    apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+    kind: Repository
+    metadata:
+      name: my-repo
+      namespace: target-namespace
+    spec:
+      url: "https://forgejo.example.com/owner/repo"
+      git_provider:
+        type: "forgejo"
+        # Set this to your Forgejo instance URL
+        url: "https://forgejo.example.com"
+        secret:
+          name: "forgejo-webhook-config"
+          # Optionally specify a different key:
+          # key: "provider.token"
+        webhook_secret:
+          name: "forgejo-webhook-config"
+          # Optionally specify a different key:
+          # key: "webhook.secret"
+    ```
+    
+    <Note>
+    For Gitea instances, you can use `type: "gitea"` instead of `type: "forgejo"`. Both are functionally identical.
+    </Note>
+  </Step>
+  
+  <Step title="Apply the Repository CRD">
+    ```bash
+    kubectl apply -f repository.yaml
+    ```
+  </Step>
+</Steps>
+
+## Configuration Examples
+
+### Standard Forgejo Configuration
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: my-app
+  namespace: my-app-pipelines
+spec:
+  url: "https://git.example.com/team/my-app"
+  git_provider:
+    type: "forgejo"
+    url: "https://git.example.com"
+    secret:
+      name: "forgejo-credentials"
+    webhook_secret:
+      name: "forgejo-credentials"
+```
+
+### Gitea Configuration (Legacy)
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: my-app
+  namespace: my-app-pipelines
+spec:
+  url: "https://gitea.example.com/team/my-app"
+  git_provider:
+    type: "gitea"
+    url: "https://gitea.example.com"
+    secret:
+      name: "gitea-credentials"
+    webhook_secret:
+      name: "gitea-credentials"
+```
+
+### With Team-based Policy
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: my-app
+  namespace: my-app-pipelines
+spec:
+  url: "https://git.example.com/team/my-app"
+  git_provider:
+    type: "forgejo"
+    url: "https://git.example.com"
+    secret:
+      name: "forgejo-credentials"
+    webhook_secret:
+      name: "forgejo-credentials"
+  # Restrict pipeline triggers to specific team members
+  policy:
+    team_ids:
+      - "123"  # Team ID from Forgejo
+```
+
+<Note>
+To use team-based policies, ensure your personal access token has the **Organization (Read)** scope.
+</Note>
+
+## Managing Tokens
+
+### Update Personal Access Token
+
+When your token expires or needs rotation:
+
+#### Using kubectl
+
+Find the secret name in your Repository CRD:
+```yaml
+spec:
+  git_provider:
+    secret:
+      name: "forgejo-webhook-config"
+```
+
+Update the token:
+```bash
+kubectl -n target_namespace patch secret forgejo-webhook-config -p "{\"data\": {\"provider.token\": \"$(echo -n $NEW_TOKEN|base64 -w0)\"}}"
+```
+
+#### By Recreating the Secret
+
+```bash
+kubectl -n target-namespace delete secret forgejo-webhook-config
+
+kubectl -n target-namespace create secret generic forgejo-webhook-config \
+  --from-literal provider.token="NEW_TOKEN" \
+  --from-literal webhook.secret="WEBHOOK_SECRET"
+```
+
+## Important Notes
+
+- **Provider type**: Use `type: "forgejo"` for new configurations. `type: "gitea"` is supported for backwards compatibility
+- **Instance URL required**: You must specify `git_provider.url` pointing to your Forgejo/Gitea instance
+- **Webhook signatures**: Currently not validated. Webhooks are accepted without signature verification, but secrets can still be stored for future compatibility
+- **Secrets scope**: Secrets must be in the same namespace as the Repository CRD
+- **CLI support**: `tkn pac` webhook management commands are not yet supported for Forgejo/Gitea
+
+## Security Considerations
+
+<Warning>
+**Webhook Signature Validation**
+
+Pipelines as Code currently does not validate webhook signatures for Forgejo/Gitea. For production environments:
+
+1. **Use network-level security**: Place Forgejo and your cluster behind a firewall
+2. **Use TLS**: Ensure webhook URLs use HTTPS
+3. **Restrict network access**: Configure network policies to limit access to the controller
+4. **Monitor webhook activity**: Review controller logs for unexpected webhook sources
+</Warning>
+
+## Troubleshooting
+
+### Webhooks Not Being Received
+
+1. **Check webhook delivery**:
+   - Go to Repository Settings > Webhooks in Forgejo
+   - Click on your webhook
+   - View recent deliveries and responses
+
+2. **Verify controller logs**:
+   ```bash
+   kubectl -n pipelines-as-code logs deployment/pipelines-as-code-controller | grep forgejo
+   ```
+
+3. **Test webhook manually**:
+   Click "Test Delivery" in Forgejo webhook settings.
+
+### Authentication Failures
+
+Verify:
+- Token has Repository (Write) and Issue (Write) permissions
+- Token is not expired
+- Secret exists in the correct namespace
+- `git_provider.url` matches your Forgejo instance URL
+
+### Pipeline Not Triggering on Pull Requests
+
+Ensure these pull request events are selected:
+- Opened
+- Reopened
+- Synchronized
+
+### Team Policy Not Working
+
+If team-based policies aren't working:
+- Verify token has Organization (Read) permission
+- Check team IDs are correct (visible in organization team settings)
+- Ensure policy users are members of specified teams
+
+## Next Steps
+
+After configuring Forgejo/Gitea:
+
+1. Add `.tekton` directory with pipeline definitions to your repository
+2. Test by creating a pull request or pushing commits
+3. Monitor pipeline status in pull request comments and commit status
+
+See the [Repository CRD documentation](/docs/guide/repositorycrd) for advanced configuration options.

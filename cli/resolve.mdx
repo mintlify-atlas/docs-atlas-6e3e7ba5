@@ -1,0 +1,468 @@
+---
+title: tkn pac resolve
+description: Resolve and test PipelineRuns locally before pushing to Git
+---
+
+# tkn pac resolve
+
+Resolve a PipelineRun as if it were executed by Pipelines-as-Code, allowing local testing before pushing to Git.
+
+## Synopsis
+
+```bash
+tkn pac resolve [flags]
+```
+
+## Description
+
+The `resolve` command processes PipelineRun templates the same way PAC does on the service:
+
+1. **Reads template files** from `.tekton/` or specified paths
+2. **Substitutes variables** (repo_url, revision, etc.)
+3. **Inlines remote tasks** from Tekton Hub or Artifact Hub
+4. **Generates secrets** if needed (e.g., `git_auth_secret`)
+5. **Outputs resolved YAML** ready to apply to cluster
+
+This allows you to test pipelines locally without creating commits or pull requests.
+
+## Usage Examples
+
+<CodeGroup>
+
+```bash Single File
+# Resolve single template
+tkn pac resolve -f .tekton/pull-request.yaml
+```
+
+```bash Multiple Files
+# Resolve multiple templates
+tkn pac resolve -f .tekton/pr.yaml -f .tekton/tasks/lint.yaml
+```
+
+```bash Directory
+# Resolve all YAML files in directory
+tkn pac resolve -f .tekton/
+```
+
+```bash With Parameters
+# Override parameters
+tkn pac resolve -f .tekton/pr.yaml \
+  -p revision=main \
+  -p repo_url=https://github.com/myorg/myapp
+```
+
+```bash Output to File
+# Save resolved YAML to file
+tkn pac resolve -f .tekton/pr.yaml -o /tmp/resolved.yaml
+```
+
+```bash Apply Directly
+# Resolve and apply to cluster
+tkn pac resolve -f .tekton/pr.yaml | kubectl apply -f -
+```
+
+```bash Output as v1beta1
+# Generate v1beta1 format (for older Tekton)
+tkn pac resolve -f .tekton/pr.yaml --v1beta1
+```
+
+```bash Skip Remote Tasks
+# Don't inline remote tasks
+tkn pac resolve -f .tekton/pr.yaml -s git-clone -s buildah
+```
+
+```bash No GenerateName
+# Don't add generateName field
+tkn pac resolve -f .tekton/pr.yaml --no-generate-name
+```
+
+</CodeGroup>
+
+## Required Flags
+
+<ParamField path="-f, --filename" type="string[]" required>
+  Template file, directory, or URL
+  
+  - Single file: `-f .tekton/pull-request.yaml`
+  - Multiple files: `-f file1.yaml -f file2.yaml`
+  - Directory: `-f .tekton/` (processes all `.yaml` files)
+  - Multiple directories: `-f .tekton/ -f tasks/`
+</ParamField>
+
+## Flags
+
+<ParamField path="-p, --params" type="string[]">
+  Parameters to substitute (format: `key=value`)
+  
+  Examples:
+  - `-p revision=main`
+  - `-p repo_url=https://github.com/org/repo`
+  - `-p image_name=quay.io/myorg/myapp`
+  
+  Multiple values:
+  ```bash
+  tkn pac resolve -f .tekton/pr.yaml \
+    -p revision=main \
+    -p repo_url=https://github.com/org/repo \
+    -p repo_owner=myorg \
+    -p repo_name=myapp
+  ```
+</ParamField>
+
+<ParamField path="-o, --output" type="string">
+  Output file path (default: stdout)
+</ParamField>
+
+<ParamField path="-s, --skip" type="string[]">
+  Skip inlining these tasks (use them as-is)
+  
+  Tasks must exist in the namespace to use them:
+  ```bash
+  tkn pac resolve -f .tekton/pr.yaml -s custom-task -s internal-task
+  ```
+</ParamField>
+
+<ParamField path="-t, --providerToken" type="string">
+  Provider token for git-auth-secret generation
+  
+  Can also be set via `PAC_PROVIDER_TOKEN` environment variable
+</ParamField>
+
+<ParamField path="--no-secret" type="boolean" default="false">
+  Don't generate git-auth-secret even if `{{ git_auth_secret }}` is found
+</ParamField>
+
+<ParamField path="--no-generate-name" type="boolean" default="false">
+  Don't add generateName field for PipelineRun uniqueness
+</ParamField>
+
+<ParamField path="-B, --v1beta1" type="boolean" default="false">
+  Output as Tekton v1beta1 format
+  
+  Useful when targeting clusters where bundle conversion doesn't work correctly
+</ParamField>
+
+## Auto-Detection
+
+When run from a Git repository, parameters are auto-detected:
+
+| Parameter | Auto-Detected From |
+|-----------|-------------------|
+| `repo_url` | Git remote URL |
+| `revision` | Current commit SHA |
+| `repo_owner` | Repository owner from URL |
+| `repo_name` | Repository name from URL |
+
+<Note>
+  Auto-detected values can be overridden with `-p` flags.
+</Note>
+
+## Parameter Substitution
+
+Template variables are replaced with actual values:
+
+### Template
+
+```yaml .tekton/pull-request.yaml
+params:
+- name: url
+  value: "{{ repo_url }}"
+- name: revision  
+  value: "{{ revision }}"
+- name: repo_owner
+  value: "{{ repo_owner }}"
+```
+
+### Resolved
+
+```yaml
+params:
+- name: url
+  value: "https://github.com/myorg/myapp"
+- name: revision
+  value: "a3c5e8d9f2b1c4e6d8a7f5e3b2c1d9a8"
+- name: repo_owner
+  value: "myorg"
+```
+
+## Remote Task Inlining
+
+Remote tasks are automatically fetched and embedded:
+
+### Template
+
+```yaml
+tasks:
+- name: fetch-repository
+  taskRef:
+    name: git-clone
+    resolver: hub
+```
+
+### Resolved
+
+```yaml
+tasks:
+- name: fetch-repository
+  taskSpec:
+    description: Clone a git repository
+    params:
+    - name: url
+      type: string
+    # ... full task definition inlined ...
+```
+
+## Git Auth Secret Generation
+
+If `{{ git_auth_secret }}` is found in templates:
+
+1. **Prompts for token** (or uses `PAC_PROVIDER_TOKEN` env var)
+2. **Creates Secret YAML** for Git authentication
+3. **Substitutes** `{{ git_auth_secret }}` with secret name
+4. **Outputs** secret along with PipelineRun
+
+### Example
+
+```bash
+$ tkn pac resolve -f .tekton/pr.yaml
+
+? Enter your Git provider token: ****
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-auth-abc123
+type: kubernetes.io/basic-auth
+data:
+  username: Z2l0
+  password: <base64-encoded-token>
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+# ...
+```
+
+**Skip secret generation:**
+
+```bash
+tkn pac resolve -f .tekton/pr.yaml --no-secret
+```
+
+**Provide token via environment:**
+
+```bash
+export PAC_PROVIDER_TOKEN=ghp_xxxxxxxxxxxx
+tkn pac resolve -f .tekton/pr.yaml
+```
+
+## Output Example
+
+```bash
+$ tkn pac resolve -f .tekton/pull-request.yaml -o /tmp/resolved.yaml
+
+PipelineRun has been written to /tmp/resolved.yaml
+```
+
+```bash
+$ cat /tmp/resolved.yaml
+
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: myapp-pr-
+  namespace: ""
+spec:
+  pipelineSpec:
+    tasks:
+    - name: fetch-repository
+      taskSpec:
+        description: Clone a git repository
+        params:
+        - name: url
+          type: string
+          description: Repository URL
+        - name: revision
+          type: string
+          description: Revision to checkout
+        steps:
+        - name: clone
+          image: gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/git-init:latest
+          script: |
+            #!/usr/bin/env sh
+            git clone $(params.url) /workspace/output
+            cd /workspace/output
+            git checkout $(params.revision)
+      params:
+      - name: url
+        value: https://github.com/myorg/myapp
+      - name: revision
+        value: a3c5e8d9f2b1c4e6d8a7f5e3b2c1d9a8
+  workspaces:
+  - name: source
+    emptyDir: {}
+```
+
+## Common Workflows
+
+### Test Before Pushing
+
+```bash
+# Resolve and validate
+tkn pac resolve -f .tekton/pr.yaml
+
+# If looks good, test on cluster
+tkn pac resolve -f .tekton/pr.yaml | kubectl apply -f -
+
+# Watch execution
+tkn pr logs -f --last
+
+# If successful, commit and push
+git add .tekton/
+git commit -m "Add pipeline"
+git push
+```
+
+### Debug Parameters
+
+```bash
+# Test with different parameters
+tkn pac resolve -f .tekton/pr.yaml \
+  -p revision=feature-branch \
+  -p environment=staging
+```
+
+### Test Multiple Templates
+
+```bash
+# Test all templates in .tekton/
+tkn pac resolve -f .tekton/ -o /tmp/all-resolved.yaml
+
+# Review
+cat /tmp/all-resolved.yaml
+
+# Apply if valid
+kubectl apply -f /tmp/all-resolved.yaml
+```
+
+### Use Existing Cluster Tasks
+
+```bash
+# Skip inlining for tasks that exist in cluster
+tkn pac resolve -f .tekton/pr.yaml \
+  -s custom-lint \
+  -s internal-security-scan
+```
+
+### Generate v1beta1 for Legacy Clusters
+
+```bash
+# Output as v1beta1
+tkn pac resolve -f .tekton/pr.yaml --v1beta1 -o resolved-v1beta1.yaml
+
+# Apply to older Tekton cluster
+kubectl apply -f resolved-v1beta1.yaml
+```
+
+## Limitations
+
+<Warning>
+  The following features are **not supported** in `resolve`:
+</Warning>
+
+- **Local task directories**: Tasks from local directories referenced in annotations cannot be resolved
+- **Provider-specific features**: Some Git provider specific features may not work
+- **Webhook payloads**: Cannot simulate full webhook payloads
+
+### Git Clone Requirement
+
+The resolved PipelineRun must be able to access the repository at the specified SHA:
+
+```bash
+# Push your changes first
+git push origin feature-branch
+
+# Then resolve with that SHA
+tkn pac resolve -f .tekton/pr.yaml -p revision=$(git rev-parse HEAD)
+```
+
+## Troubleshooting
+
+### No Files Specified
+
+```
+Error: you need to at least specify a file with -f
+```
+
+Solution:
+
+```bash
+tkn pac resolve -f .tekton/pull-request.yaml
+```
+
+### File Not Found
+
+```
+Error: stat .tekton/pr.yaml: no such file or directory
+```
+
+Solutions:
+- Check file path: `ls .tekton/`
+- Use absolute path: `tkn pac resolve -f $PWD/.tekton/pr.yaml`
+- Check current directory: `pwd`
+
+### Cannot Connect to Cluster
+
+```
+Couldn't get kubeConfiguration namespace
+```
+
+This is **not an error** - resolve works without cluster access. Some features (like checking existing secrets) won't work.
+
+### Remote Task Resolution Failed
+
+```
+Error: failed to get task git-clone from hub
+```
+
+Solutions:
+- Check internet connectivity
+- Verify task name exists on Hub: https://hub.tekton.dev/
+- Use `--skip` to skip problematic tasks
+
+### Invalid Template Syntax
+
+```
+Error: error unmarshaling JSON: invalid character
+```
+
+Solution: Validate YAML syntax:
+
+```bash
+yamllint .tekton/pull-request.yaml
+```
+
+## Environment Variables
+
+<ParamField path="PAC_PROVIDER_TOKEN" type="string">
+  Git provider token for secret generation
+  
+  ```bash
+  export PAC_PROVIDER_TOKEN=ghp_xxxxxxxxxxxx
+  tkn pac resolve -f .tekton/pr.yaml
+  ```
+</ParamField>
+
+## Related Commands
+
+- [`tkn pac generate`](/cli/generate) - Generate PipelineRun templates
+- [`tkn pac create repo`](/cli/create) - Create Repository CRD
+- [`kubectl apply`](https://kubernetes.io/docs/reference/kubectl/cheatsheet/) - Apply resolved YAML to cluster
+
+## See Also
+
+- [Authoring PipelineRuns](/docs/guide/authoringprs)
+- [Resolver](/docs/guide/resolver)
+- [Template Variables](/docs/guide/authoringprs#variable-interpolation)
+- [Tekton Hub](https://hub.tekton.dev/)

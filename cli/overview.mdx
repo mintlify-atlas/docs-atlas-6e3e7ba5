@@ -1,0 +1,131 @@
+---
+title: CLI Overview
+description: Introduction to the tkn-pac CLI for Pipelines as Code
+---
+
+# CLI Overview
+
+Pipelines-as-Code provides a powerful CLI designed to work as a plug-in to the [Tekton CLI (tkn)](https://github.com/tektoncd/cli).
+
+## What is tkn-pac?
+
+`tkn-pac` (or `tkn pac` when used as a plugin) is the command-line interface for Pipelines-as-Code. It provides a comprehensive set of commands to manage your CI/CD pipelines, repositories, and infrastructure.
+
+## Key Features
+
+- **Bootstrap installations**: Quickly set up Pipelines-as-Code on your cluster
+- **Repository management**: Create, list, describe, and delete Repository CRDs
+- **Pipeline generation**: Generate PipelineRun templates with language detection
+- **Logs and debugging**: View logs and describe PipelineRun status
+- **Webhook management**: Configure webhooks and tokens for Git providers
+- **Local testing**: Resolve and test pipelines locally before pushing
+
+## Available Commands
+
+| Command | Description |
+|---------|-------------|
+| [`bootstrap`](/cli/bootstrap) | Bootstrap Pipelines-as-Code installation |
+| [`create`](/cli/create) | Create a new Repository CRD |
+| [`generate`](/cli/generate) | Generate PipelineRun templates |
+| [`list`](/cli/repository#list) | List Repository CRDs |
+| [`describe`](/cli/describe) | Describe a Repository and its runs |
+| [`logs`](/cli/logs) | Show PipelineRun logs |
+| [`resolve`](/cli/resolve) | Resolve PipelineRuns locally |
+| [`webhook`](/cli/webhook) | Manage webhook configuration |
+| [`version`](/cli/version) | Display CLI version |
+
+## Installation
+
+See the [Installation Guide](/cli/installation) for detailed instructions on installing `tkn-pac`.
+
+## Usage Pattern
+
+Most commands follow this pattern:
+
+```bash
+tkn pac <command> [subcommand] [flags] [arguments]
+```
+
+### Examples
+
+<CodeGroup>
+
+```bash List repositories
+tkn pac list
+```
+
+```bash Create a repository
+tkn pac create repo
+```
+
+```bash View logs
+tkn pac logs my-repo
+```
+
+```bash Generate a template
+tkn pac generate
+```
+
+</CodeGroup>
+
+## Global Flags
+
+Most commands support these common flags:
+
+<ParamField path="-n, --namespace" type="string">
+  Kubernetes namespace to use (defaults to current context namespace)
+</ParamField>
+
+<ParamField path="-C, --no-color" type="boolean">
+  Disable colored output
+</ParamField>
+
+<ParamField path="--kubeconfig" type="string">
+  Path to kubeconfig file (defaults to `~/.kube/config`)
+</ParamField>
+
+## Getting Help
+
+You can get help for any command by adding `--help` or `-h`:
+
+```bash
+tkn pac --help
+tkn pac create --help
+tkn pac bootstrap github-app --help
+```
+
+## Configuration
+
+### Kubeconfig
+
+The CLI looks for Kubernetes configuration in:
+- **Linux/macOS**: `$HOME/.kube/config`
+- **Windows**: `%USERPROFILE%\.kube\config`
+
+You can override this with the `--kubeconfig` flag or `KUBECONFIG` environment variable.
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `KUBECONFIG` | Path to kubeconfig file |
+| `PAC_PROVIDER_TOKEN` | Provider token for `resolve` command |
+| `PAC_TEKTON_DASHBOARD_URL` | Tekton Dashboard URL for `logs` command |
+| `TEKTON_DASHBOARD_URL` | Alternative Tekton Dashboard URL |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Install CLI" icon="download" href="/cli/installation">
+    Get started by installing tkn-pac
+  </Card>
+  <Card title="Bootstrap Setup" icon="rocket" href="/cli/bootstrap">
+    Bootstrap your first installation
+  </Card>
+  <Card title="Create Repository" icon="plus" href="/cli/create">
+    Create your first Repository CRD
+  </Card>
+  <Card title="Generate Pipeline" icon="code" href="/cli/generate">
+    Generate a PipelineRun template
+  </Card>
+</CardGroup>

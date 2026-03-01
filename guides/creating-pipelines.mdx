@@ -1,0 +1,534 @@
+---
+title: Creating Pipeline Definitions
+description: Learn how to author PipelineRuns in the .tekton directory with dynamic variables and best practices
+---
+
+## Overview
+
+Pipelines-as-Code allows you to define your Tekton pipelines directly in your Git repository. Pipeline definitions are stored in the `.tekton/` directory and automatically executed when Git events occur.
+
+<Info>
+Pipelines-as-Code stays as close to standard Tekton templates as possible. Write your templates as `.yaml` files, and PAC will run them.
+</Info>
+
+## Directory Structure
+
+The `.tekton` directory must be at the top level of your repository:
+
+```
+your-repo/
+├── .tekton/
+│   ├── pull-request.yaml
+│   ├── push-main.yaml
+│   └── tasks/
+│       └── custom-task.yaml
+├── src/
+└── README.md
+```
+
+<Steps>
+
+### Create the .tekton directory
+
+Create a `.tekton` directory at the root of your repository:
+
+```bash
+mkdir .tekton
+```
+
+### Generate a basic PipelineRun
+
+Use the `tkn pac` CLI to generate a template:
+
+```bash
+tkn pac generate
+```
+
+You'll be prompted for:
+- **Git event type**: Pull Request or Push
+- **Target branch**: e.g., `main`
+
+This creates a basic template in `.tekton/pull-request.yaml`.
+
+### Customize your PipelineRun
+
+Edit the generated file to add your build/test logic:
+
+```yaml .tekton/pull-request.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: pr-build
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  params:
+    - name: repo_url
+      value: "{{ repo_url }}"
+    - name: revision
+      value: "{{ revision }}"
+  pipelineSpec:
+    params:
+      - name: repo_url
+      - name: revision
+    tasks:
+      - name: fetch-repository
+        taskRef:
+          name: git-clone
+          resolver: hub
+        workspaces:
+          - name: output
+            workspace: source
+        params:
+          - name: url
+            value: "$(params.repo_url)"
+          - name: revision
+            value: "$(params.revision)"
+      - name: run-tests
+        runAfter: [fetch-repository]
+        taskRef:
+          name: golang-test
+          resolver: hub
+        workspaces:
+          - name: source
+            workspace: source
+  workspaces:
+    - name: source
+      emptyDir: {}
+```
+
+</Steps>
+
+## Dynamic Variables
+
+Pipelines-as-Code provides template variables that are replaced at runtime with values from the Git event.
+
+### Essential Variables
+
+<ParamField path="repo_url" type="string">
+  The full URL of the repository
+  
+  **Example**: `https://github.com/openshift-pipelines/pipelines-as-code`
+</ParamField>
+
+<ParamField path="revision" type="string">
+  The commit SHA being tested
+  
+  **Example**: `1234567890abcdef`
+</ParamField>
+
+<ParamField path="target_branch" type="string">
+  The branch the event targets (for PRs: base branch; for push: the branch pushed to)
+  
+  **Example**: `main`
+</ParamField>
+
+<ParamField path="source_branch" type="string">
+  The branch where the event originates (for PRs: head branch; for push: same as target_branch)
+  
+  **Example**: `feature/my-feature`
+</ParamField>
+
+### All Available Variables
+
+| Variable | Description | Example |
+|----------|-------------|----------|
+| `body` | Full webhook payload | `{{ body.pull_request.user.email }}` |
+| `event` | Normalized event type | `pull_request`, `push`, or `incoming` |
+| `event_type` | Provider-specific event type | `pull_request` (GitHub), `Merge Request` (GitLab) |
+| `git_auth_secret` | Auto-generated secret for private repos | `pac-gitauth-xkxkx` |
+| `headers` | Request headers | `{{ headers['x-github-event'] }}` |
+| `pull_request_number` | PR/MR number | `42` |
+| `repo_name` | Repository name | `pipelines-as-code` |
+| `repo_owner` | Repository owner | `openshift-pipelines` |
+| `repo_url` | Full repository URL | `https://github.com/openshift-pipelines/pipelines-as-code` |
+| `revision` | Commit SHA | `1234567890abcdef` |
+| `sender` | Username of the event sender | `johndoe` |
+| `source_branch` | Source branch name | `feature-branch` |
+| `git_tag` | Git tag (only for tag push events) | `v1.0.0` |
+| `source_url` | Source repository URL | `https://github.com/fork/repo` |
+| `target_branch` | Target branch name | `main` |
+| `target_namespace` | Namespace where Repository CR matched | `my-namespace` |
+| `trigger_comment` | Comment that triggered the run (GitOps commands) | `/test my-pipeline` |
+| `pull_request_labels` | PR labels (newline-separated) | `bug\nenhancement` |
+
+### Using Variables
+
+Variables use double-brace syntax: `{{ variable_name }}`
+
+<CodeGroup>
+```yaml Basic Usage
+params:
+  - name: git-url
+    value: "{{ repo_url }}"
+  - name: git-revision
+    value: "{{ revision }}"
+```
+
+```yaml Environment Variables
+env:
+  - name: COMMIT_SHA
+    value: "{{ revision }}"
+  - name: PR_NUMBER
+    value: "{{ pull_request_number }}"
+```
+
+```yaml Script Variables
+script: |
+  #!/usr/bin/env bash
+  echo "Building commit {{ revision }}"
+  echo "Target branch: {{ target_branch }}"
+  echo "Repository: {{ repo_owner }}/{{ repo_name }}"
+```
+</CodeGroup>
+
+## Advanced Variable Usage
+
+### Accessing Webhook Body
+
+You can access any field from the webhook payload:
+
+```yaml
+params:
+  - name: pr-title
+    value: "{{ body.pull_request.title }}"
+  - name: author-email
+    value: "{{ body.pull_request.user.email }}"
+```
+
+### Object Values in YAML
+
+When passing objects or multiline values, use block format:
+
+```yaml
+params:
+  - name: body
+    value: |-
+      {{ body }}
+  - name: pull_request
+    value: >
+      {{ body.pull_request }}
+```
+
+### CEL Expressions
+
+For complex expressions, use the `cel:` prefix:
+
+```yaml
+params:
+  - name: environment
+    value: "{{ cel: pac.target_branch == 'main' ? 'production' : 'staging' }}"
+  - name: commit-type
+    value: "{{ cel: has(body.head_commit) && body.head_commit.message.startsWith('Merge') ? 'merge' : 'regular' }}"
+  - name: go-files-changed
+    value: "{{ cel: files.all.exists(f, f.endsWith('.go')) ? 'true' : 'false' }}"
+```
+
+CEL expressions have access to:
+- `body` - Full webhook payload
+- `headers` - HTTP headers
+- `files` - Changed files (`files.all`, `files.added`, `files.deleted`, `files.modified`, `files.renamed`)
+- `pac` - Standard PAC parameters (`pac.revision`, `pac.target_branch`, etc.)
+
+## PipelineRun Structure
+
+### Required Components
+
+<Steps>
+
+### Unique Name
+
+Each PipelineRun must have a unique name:
+
+```yaml
+metadata:
+  name: unique-pipeline-name  # Must be unique across all PipelineRuns
+```
+
+<Warning>
+PipelineRuns with duplicate names will never be matched.
+</Warning>
+
+### Event Matching Annotations
+
+At minimum, specify which events trigger the pipeline:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-event: "[pull_request]"
+  pipelinesascode.tekton.dev/on-target-branch: "[main]"
+```
+
+### PipelineSpec or PipelineRef
+
+Define your pipeline inline or reference an external one:
+
+<Tabs>
+<Tab title="Inline PipelineSpec">
+```yaml
+spec:
+  pipelineSpec:
+    tasks:
+      - name: build
+        taskSpec:
+          steps:
+            - name: build-step
+              image: golang:1.21
+              script: |
+                go build ./...
+```
+</Tab>
+
+<Tab title="PipelineRef">
+```yaml
+spec:
+  pipelineRef:
+    name: my-pipeline
+  # Pipeline definition in .tekton/pipeline.yaml
+```
+</Tab>
+</Tabs>
+
+</Steps>
+
+## Complete Examples
+
+### Python CI Pipeline
+
+```yaml .tekton/python-ci.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: python-ci
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request, push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main, develop]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: fetch-source
+        taskRef:
+          name: git-clone
+          resolver: hub
+        workspaces:
+          - name: output
+            workspace: source
+        params:
+          - name: url
+            value: "{{ repo_url }}"
+          - name: revision
+            value: "{{ revision }}"
+      - name: python-test
+        runAfter: [fetch-source]
+        taskRef:
+          name: python-test
+          resolver: hub
+        workspaces:
+          - name: source
+            workspace: source
+        params:
+          - name: requirements_file
+            value: "requirements.txt"
+          - name: python_version
+            value: "3.11"
+  workspaces:
+    - name: source
+      emptyDir: {}
+```
+
+### Container Build Pipeline
+
+```yaml .tekton/build-push.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: build-push
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: fetch-source
+        taskRef:
+          name: git-clone
+          resolver: hub
+        workspaces:
+          - name: output
+            workspace: source
+        params:
+          - name: url
+            value: "{{ repo_url }}"
+          - name: revision
+            value: "{{ revision }}"
+      - name: build-push
+        runAfter: [fetch-source]
+        taskRef:
+          name: buildah
+          resolver: hub
+        workspaces:
+          - name: source
+            workspace: source
+        params:
+          - name: IMAGE
+            value: "quay.io/myorg/myapp:{{ revision }}"
+          - name: DOCKERFILE
+            value: "./Dockerfile"
+  workspaces:
+    - name: source
+      emptyDir: {}
+```
+
+### Conditional Execution
+
+```yaml .tekton/docs-validation.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: docs-validation
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change: "[docs/**, **.md]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: fetch-source
+        taskRef:
+          name: git-clone
+          resolver: hub
+        workspaces:
+          - name: output
+            workspace: source
+        params:
+          - name: url
+            value: "{{ repo_url }}"
+          - name: revision
+            value: "{{ revision }}"
+      - name: lint-docs
+        runAfter: [fetch-source]
+        taskRef:
+          name: markdown-lint
+          resolver: hub
+        workspaces:
+          - name: source
+            workspace: source
+  workspaces:
+    - name: source
+      emptyDir: {}
+```
+
+## Using GitHub App Token
+
+Access the GitHub API using the temporary installation token:
+
+```yaml
+tasks:
+  - name: add-comment
+    taskRef:
+      name: github-add-comment
+    params:
+      - name: REQUEST_URL
+        value: "{{ repo_url }}/pull/{{ pull_request_number }}"
+      - name: COMMENT_OR_FILE
+        value: "Build completed successfully!"
+      - name: GITHUB_TOKEN_SECRET_NAME
+        value: "{{ git_auth_secret }}"
+      - name: GITHUB_TOKEN_SECRET_KEY
+        value: "git-provider-token"
+```
+
+Or as an environment variable:
+
+```yaml
+env:
+  - name: GITHUB_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: "{{ git_auth_secret }}"
+        key: "git-provider-token"
+```
+
+<Info>
+- GitHub App tokens are available for 8 hours
+- Tokens are scoped to the repository by default (configurable via settings)
+</Info>
+
+## Best Practices
+
+<Steps>
+
+### Always use dynamic variables
+
+Never hardcode repository URLs or commit SHAs:
+
+```yaml
+# ✅ Good
+params:
+  - name: url
+    value: "{{ repo_url }}"
+
+# ❌ Bad
+params:
+  - name: url
+    value: "https://github.com/myorg/myrepo"
+```
+
+### Check out code first
+
+Most pipelines start by cloning the repository:
+
+```yaml
+tasks:
+  - name: fetch-repository
+    taskRef:
+      name: git-clone
+      resolver: hub
+    params:
+      - name: url
+        value: "{{ repo_url }}"
+      - name: revision
+        value: "{{ revision }}"
+```
+
+### Use unique PipelineRun names
+
+Ensure each PipelineRun has a distinct name to avoid conflicts.
+
+### Leverage workspaces
+
+Share data between tasks using workspaces:
+
+```yaml
+workspaces:
+  - name: source
+    emptyDir: {}
+```
+
+### Test locally
+
+Use `tkn pac resolve` to test your PipelineRun before pushing:
+
+```bash
+tkn pac resolve -f .tekton/pull-request.yaml
+```
+
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Event Matching" icon="filter" href="/guides/event-matching">
+    Learn how to match PipelineRuns to specific events, branches, and file changes
+  </Card>
+  <Card title="Pipeline Resolution" icon="puzzle-piece" href="/guides/pipeline-resolution">
+    Understand how PAC resolves tasks and pipelines from remote sources
+  </Card>
+  <Card title="Running Pipelines" icon="play" href="/guides/running-pipelines">
+    Configure execution, permissions, and monitoring
+  </Card>
+  <Card title="Repository CRD" icon="database" href="/guides/repository-crd">
+    Configure the Repository Custom Resource
+  </Card>
+</CardGroup>

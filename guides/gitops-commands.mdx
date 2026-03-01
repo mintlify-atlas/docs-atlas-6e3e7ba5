@@ -1,0 +1,673 @@
+---
+title: ChatOps Commands
+description: Control pipelines through PR comments and commit messages with /test, /retest, /cancel, and custom commands
+---
+
+## Overview
+
+GitOps commands let you control Pipelines-as-Code directly from Git provider comments and commit messages. This creates a journal of all pipeline executions directly on your pull requests, next to your code.
+
+Available commands:
+- `/test` - Run all or specific pipelines
+- `/retest` - Retry failed pipelines
+- `/cancel` - Cancel running pipelines
+- `/ok-to-test` - Approve external contributor PRs
+- Custom commands via `on-comment` annotation
+
+## Pull Request Commands
+
+GitOps commands work on pull request comments (all providers) and pushed commits (GitHub, GitLab).
+
+### /retest
+
+Restart **failed** PipelineRuns or create new runs if none exist for the current commit.
+
+```text
+Thanks for the contribution! The failure seems to be infrastructure-related, not your code.
+
+/retest
+```
+
+**Behavior**:
+- Creates new runs if previous runs **failed**
+- Creates new runs if **no runs exist** for the commit
+- **Skips** if successful runs already exist (avoids duplicates)
+
+**Force restart** (even if successful):
+
+```text
+/retest my-pipeline-name
+```
+
+This **always** creates a new run.
+
+### /test
+
+Run all matching PipelineRuns or a specific PipelineRun.
+
+```text
+/test
+```
+
+Runs all PipelineRuns that match the PR event.
+
+**Target specific pipeline**:
+
+```text
+/test my-pipeline-name
+```
+
+Runs only the `my-pipeline-name` PipelineRun.
+
+**Difference from /retest**:
+- `/test` runs regardless of previous status
+- `/retest` only runs if previous runs failed or don't exist
+
+### /ok-to-test
+
+Allow external contributors to run CI by approving their PR.
+
+```text
+Looks good! Thanks for the fix.
+
+/ok-to-test
+```
+
+Only authorized users can use this command:
+- Repository owner
+- Repository collaborators
+- Organization members
+- Users in OWNERS file
+- Users in Repository CR `policy.ok_to_test`
+
+See [Running Pipelines - Authorization](/guides/running-pipelines#acl-permissions) for details.
+
+#### Require SHA (GitHub Only)
+
+Cluster admins can enforce SHA validation for `/ok-to-test`:
+
+```yaml pipelines-as-code ConfigMap
+data:
+  require-ok-to-test-sha: "true"
+```
+
+Users must include the commit SHA:
+
+```text
+/ok-to-test 1a2b3c4
+```
+
+PAC verifies:
+- Short SHAs (7-40 chars) match HEAD commit prefix
+- Full SHAs match exactly
+
+If missing or invalid, the bot replies with instructions.
+
+**Why?** Prevents time-of-check/time-of-use attacks where an attacker pushes new code immediately after approval.
+
+### /cancel
+
+Cancel running PipelineRuns.
+
+**Cancel all**:
+
+```text
+Infrastructure issues detected. Cancelling all runs.
+
+/cancel
+```
+
+**Cancel specific**:
+
+```text
+/cancel my-pipeline-name
+```
+
+On GitHub Apps, the status changes to "cancelled":
+
+![Cancelled Pipeline](/images/pr-cancel.png)
+
+<Info>
+GitOps commands don't work on **closed** pull requests or merge requests.
+</Info>
+
+## Pushed Commit Commands
+
+<Tabs>
+<Tab title="GitHub">
+Comment on commit to trigger commands:
+
+![GitHub Commit Comments](/images/gitops-comments-on-commit.png)
+
+**How to comment**:
+1. Go to repository → **Commits**
+2. Click an individual commit
+3. Click a line number to add a comment
+</Tab>
+
+<Tab title="GitLab">
+Comment on commit to trigger commands:
+
+![GitLab Commit Comments](/images/gitlab-gitops-comment-on-commit.png)
+
+**How to comment**:
+1. Go to repository → **History**
+2. Click an individual commit
+3. Click a line number to add a comment
+</Tab>
+</Tabs>
+
+### Branch Targeting
+
+Commands on pushed commits target the **latest commit (HEAD)** of a branch.
+
+**Default branch** (no arguments):
+
+```text
+/test
+/retest
+/test my-pipeline
+/retest my-pipeline
+```
+
+Runs on the default branch (`main`, `master`).
+
+**Specific branch**:
+
+```text
+/test branch:develop
+/retest branch:feature-x
+/test my-pipeline branch:staging
+/cancel branch:hotfix
+```
+
+### PipelineRun Configuration
+
+For commit-based commands to work, the PipelineRun must be configured for push events on that branch:
+
+```yaml .tekton/push-pipeline.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: push-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[develop]"
+spec:
+  # ...
+```
+
+Then use:
+
+```text
+/test push-pipeline branch:develop
+```
+
+<Warning>
+`/ok-to-test` does **not** work on pushed commits. It's only for pull requests.
+</Warning>
+
+### Commit in Multiple Branches
+
+If a commit exists in multiple branches:
+
+- **No branch specified**: Uses the branch with the latest commit
+- **Branch specified**: Uses that specific branch
+
+## Git Tag Commands
+
+Trigger PipelineRuns on tagged commits.
+
+**Supported**: GitHub (App and Webhook), GitLab
+
+```text
+/test tag:v1.0.0
+/retest tag:v1.0.0
+/test my-pipeline tag:v1.0.0
+/cancel tag:v1.0.0
+/cancel my-pipeline tag:v1.0.0
+```
+
+**How to comment on a tag**:
+
+<Tabs>
+<Tab title="GitHub">
+1. Go to repository → **Releases** or **Tags**
+2. Click the tag (e.g., `v1.0.0`)
+3. Navigate to the tagged commit
+4. Add a comment on the commit
+</Tab>
+
+<Tab title="GitLab">
+Similar process through the Tags UI.
+</Tab>
+</Tabs>
+
+**PipelineRun for tags**:
+
+```yaml .tekton/tag-release.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: tag-release
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[refs/tags/*]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: echo-tag
+        taskSpec:
+          steps:
+            - name: echo
+              image: registry.access.redhat.com/ubi10/ubi-micro
+              script: |
+                echo "Released tag: {{ git_tag }}"
+```
+
+Then trigger:
+
+```text
+/test tag:v1.0.0
+```
+
+<Info>
+The event type is `push` for tag events. Configure `on-event: "[push]"` and `on-target-branch: "[refs/tags/*]"`.
+</Info>
+
+## Custom GitOps Commands
+
+Create custom commands using the `on-comment` annotation.
+
+<ParamField path="pipelinesascode.tekton.dev/on-comment" type="string">
+  Regex pattern to match comments
+  
+  ```yaml
+  annotations:
+    pipelinesascode.tekton.dev/on-comment: "^/deploy"
+  ```
+</ParamField>
+
+See [Event Matching - Comment Triggers](/guides/event-matching#comment-based-triggers) for details.
+
+### Example: Deploy Command
+
+```yaml .tekton/deploy.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: deploy-staging
+  annotations:
+    pipelinesascode.tekton.dev/on-comment: "^/deploy-staging"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: deploy
+        taskSpec:
+          steps:
+            - name: deploy
+              image: kubectl
+              script: |
+                kubectl apply -f manifests/staging/
+```
+
+Trigger with:
+
+```text
+/deploy-staging
+```
+
+### Example: Merge PR Command
+
+```yaml .tekton/merge-pr.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: merge-pr
+  annotations:
+    pipelinesascode.tekton.dev/on-comment: "^/merge-pr"
+spec:
+  params:
+    - name: comment
+      value: "{{ trigger_comment }}"
+  pipelineSpec:
+    params:
+      - name: comment
+    tasks:
+      - name: merge
+        taskSpec:
+          params:
+            - name: comment
+          steps:
+            - name: parse-comment
+              image: alpine
+              script: |
+                # Parse comment for branch name
+                echo "Comment: $(params.comment)"
+                # Use GitHub API to merge PR
+```
+
+Trigger with:
+
+```text
+/merge-pr main
+```
+
+## Accessing the Trigger Comment
+
+When a GitOps command triggers a PipelineRun, the `{{ trigger_comment }}` variable is set.
+
+```yaml
+params:
+  - name: trigger-comment
+    value: "{{ trigger_comment }}"
+```
+
+**Newlines** are replaced with `\n`. Restore them in shell scripts:
+
+```yaml
+steps:
+  - name: process-comment
+    image: alpine
+    script: |
+      echo -e "{{ trigger_comment }}" > /tmp/comment
+      grep "/deploy" /tmp/comment
+```
+
+## Passing Arguments to Commands
+
+Override dynamic variables or custom parameters:
+
+```text
+/test my-pipeline env=staging region=us-west-2
+```
+
+**Requirements**:
+- Parameter must be defined as a custom parameter in Repository CR or be a standard dynamic variable
+- Cannot pass arbitrary undefined parameters
+
+**Supported formats**:
+
+```text
+key=value
+key="value with spaces"
+key="value with \"quotes\""
+key="multiline
+value"
+```
+
+**Example Repository CR**:
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+spec:
+  url: "https://github.com/owner/repo"
+  params:
+    - name: env
+      value: "dev"  # Default
+    - name: region
+      value: "us-east-1"  # Default
+```
+
+**Override via comment**:
+
+```text
+/test deploy-pipeline env=production region=eu-west-1
+```
+
+## Event Type Annotation
+
+The `pipeline.tekton.dev/event-type` annotation indicates which GitOps command triggered the run:
+
+| Annotation Value | Description |
+|------------------|-------------|
+| `test-all-comment` | `/test` (all pipelines) |
+| `test-comment` | `/test <pipeline-name>` |
+| `retest-all-comment` | `/retest` (all failed) |
+| `retest-comment` | `/retest <pipeline-name>` |
+| `ok-to-test-comment` | `/ok-to-test` |
+| `cancel-all-comment` | `/cancel` (all runs) |
+| `cancel-comment` | `/cancel <pipeline-name>` |
+| `on-comment` | Custom comment trigger |
+
+**Dynamic Variable `{{ event_type }}`**:
+
+For backward compatibility, `{{ event_type }}` returns `pull_request` for:
+- `test-all-comment`
+- `test-comment`
+- `retest-all-comment`
+- `retest-comment`
+- `ok-to-test-comment`
+
+This behavior is **deprecated** and will change in future releases to return the specific event type.
+
+## Non-Matching PipelineRun Trigger
+
+GitOps commands can trigger PipelineRuns **regardless of annotations**:
+
+```text
+/test my-pipeline
+```
+
+This runs `my-pipeline` even if its annotations don't match the current event.
+
+**Use case**: Pipelines triggered only by comments, not automatic events.
+
+```yaml .tekton/manual-deploy.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: manual-deploy
+  # No on-event or on-target-branch annotations
+spec:
+  # Only runs via /test manual-deploy
+```
+
+## Neutral Status on No Match
+
+If `/ok-to-test` is used but no PipelineRuns match:
+- **GitHub**: Neutral commit status posted ("No pipelines matched")
+- Allows other workflows (e.g., auto-merge) to proceed
+
+<Info>
+Neutral status is only supported on GitHub.
+</Info>
+
+## Examples
+
+### Basic PR Workflow
+
+```text
+# External contributor opens PR
+# Bot posts: "User lacks permissions. Repository owners can comment '/ok-to-test'"
+
+# Repository owner reviews code
+/ok-to-test
+
+# Later, infrastructure fails
+/retest
+
+# Run specific pipeline
+/test security-scan
+```
+
+### Pushed Commit Workflow
+
+```text
+# Developer pushes to feature branch
+# Comment on commit:
+/test branch:feature/new-feature
+
+# Cancel if needed
+/cancel branch:feature/new-feature
+```
+
+### Tag Release Workflow
+
+```text
+# Create tag
+git tag v1.0.0
+git push origin v1.0.0
+
+# Comment on tag commit:
+/test tag:v1.0.0
+
+# Later, retry release
+/retest release-pipeline tag:v1.0.0
+```
+
+### Custom Deploy Workflow
+
+```text
+# PR approved, ready to deploy
+/deploy-staging
+
+# After validation
+/deploy-production region=us-west-2
+
+# Rollback if needed
+/deploy-staging version=v1.0.0
+```
+
+## Best Practices
+
+<Steps>
+
+### Document custom commands
+
+Add a comment in your PipelineRun:
+
+```yaml
+metadata:
+  name: deploy-staging
+  annotations:
+    # Trigger with: /deploy-staging
+    pipelinesascode.tekton.dev/on-comment: "^/deploy-staging"
+```
+
+Or in your repository README:
+
+```markdown
+## GitOps Commands
+
+- `/test` - Run all pipelines
+- `/retest` - Retry failed pipelines
+- `/deploy-staging` - Deploy to staging environment
+- `/deploy-production` - Deploy to production
+```
+
+### Use /retest for transient failures
+
+Save resources by only retrying failures:
+
+```text
+/retest
+```
+
+Instead of always using `/test`.
+
+### Require SHA for /ok-to-test
+
+In production environments, enable SHA validation:
+
+```yaml
+data:
+  require-ok-to-test-sha: "true"
+```
+
+### Use branch targeting on monorepos
+
+Test specific branches without affecting others:
+
+```text
+/test service-a branch:feature/new-api
+```
+
+### Combine with parameters
+
+Make commands flexible:
+
+```text
+/test deploy env=staging region=us-east-1 replicas=3
+```
+
+</Steps>
+
+## Troubleshooting
+
+### Command not triggering
+
+<Steps>
+
+### Verify comment format
+
+Commands must **start** the comment (after whitespace):
+
+```text
+✅ /test
+✅ /test my-pipeline
+❌ Let's run /test  # Won't work
+```
+
+### Check authorization
+
+Ensure user is authorized (see [Running Pipelines - Authorization](/guides/running-pipelines#acl-permissions)).
+
+### Verify PipelineRun exists
+
+```bash
+ls .tekton/
+```
+
+Check the PipelineRun file exists and has correct name.
+
+### Check PAC controller logs
+
+```bash
+kubectl logs -n pipelines-as-code -l app.kubernetes.io/name=controller
+```
+
+</Steps>
+
+### /retest not creating new runs
+
+Expected behavior: `/retest` only runs if:
+- Previous runs **failed**, OR
+- No runs exist yet
+
+If successful runs exist, use:
+
+```text
+/test my-pipeline
+```
+
+### Custom command not matching
+
+Verify regex pattern:
+
+```yaml
+annotations:
+  # Matches: /deploy-staging
+  pipelinesascode.tekton.dev/on-comment: "^/deploy-staging"
+  
+  # Matches: /deploy staging or /deploy production
+  pipelinesascode.tekton.dev/on-comment: "^/deploy (staging|production)"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Event Matching" icon="filter" href="/guides/event-matching">
+    Configure comment-based triggers with on-comment annotation
+  </Card>
+  <Card title="Running Pipelines" icon="play" href="/guides/running-pipelines">
+    Understand authorization and execution
+  </Card>
+  <Card title="Creating Pipelines" icon="code" href="/guides/creating-pipelines">
+    Use trigger_comment variable in PipelineRuns
+  </Card>
+  <Card title="Repository CRD" icon="database" href="/guides/repository-crd">
+    Configure authorization policies for ok-to-test
+  </Card>
+</CardGroup>

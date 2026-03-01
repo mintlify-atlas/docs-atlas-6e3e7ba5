@@ -1,0 +1,570 @@
+---
+title: Running and Managing Pipelines
+description: Execute pipelines with proper authorization, monitor execution, and manage PipelineRun lifecycle
+---
+
+## Overview
+
+Pipelines-as-Code automatically executes PipelineRuns when Git events occur (pushes, pull requests). This guide covers authorization, execution monitoring, error handling, and lifecycle management.
+
+## How Execution Works
+
+<Steps>
+
+### Event Occurs
+
+A developer pushes code or opens a pull request.
+
+### Repository Matching
+
+PAC finds the Repository CR matching the event's repository URL.
+
+### PipelineRun Discovery
+
+PAC scans the `.tekton/` directory for PipelineRun definitions.
+
+### Event Matching
+
+PipelineRuns with matching annotations are selected (see [Event Matching](/guides/event-matching)).
+
+### Authorization Check
+
+PAC verifies the user has permission to run pipelines.
+
+### Execution
+
+Matched PipelineRuns are created in the Repository CR's namespace.
+
+</Steps>
+
+<Info>
+PipelineRuns are fetched from the source branch by default. Configure `pipelinerun_provenance: "default_branch"` in the Repository CR to always use the default branch.
+</Info>
+
+## ACL Permissions
+
+Only authorized users can trigger PipelineRuns. A user is authorized if they are:
+
+<Tabs>
+<Tab title="Repository-based">
+- Repository owner
+- Repository collaborator
+- Organization member (public or private)
+- Has push permissions to the repository
+</Tab>
+
+<Tab title="OWNERS file">
+Listed in the `OWNERS` file in the default branch:
+
+```yaml OWNERS
+approvers:
+  - alice
+  - bob
+reviewers:
+  - charlie
+  - diana
+```
+
+Both `approvers` and `reviewers` can trigger PipelineRuns.
+</Tab>
+
+<Tab title="OWNERS_ALIASES">
+Use aliases for teams:
+
+```yaml OWNERS_ALIASES
+aliases:
+  team-leads:
+    - alice
+    - bob
+  contributors:
+    - charlie
+    - diana
+```
+
+```yaml OWNERS
+approvers:
+  - team-leads
+reviewers:
+  - contributors
+```
+</Tab>
+
+<Tab title="Repository CR Policy">
+Explicitly allow users in the Repository CR:
+
+```yaml
+spec:
+  settings:
+    policy:
+      pull_request:
+        - external-contributor
+      ok_to_test:
+        - maintainer1
+        - maintainer2
+```
+</Tab>
+</Tabs>
+
+### Unauthorized Users
+
+When an unauthorized user opens a PR, PAC:
+
+1. Posts a `Pending` status check
+2. Comments that the user lacks permissions
+3. Waits for an authorized user to comment `/ok-to-test`
+
+<Info>
+GitHub bot users (detected via the GitHub API) are silently ignored unless explicitly authorized.
+</Info>
+
+### `/ok-to-test` Command
+
+Authorized users can approve external PRs:
+
+```text
+Looks good! Thanks for the contribution.
+
+/ok-to-test
+```
+
+#### SHA Validation (GitHub only)
+
+Cluster administrators can require SHA validation for `/ok-to-test`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+data:
+  require-ok-to-test-sha: "true"
+```
+
+Users must then include the commit SHA:
+
+```text
+/ok-to-test 1a2b3c4
+```
+
+This prevents time-of-check/time-of-use attacks where an attacker pushes new code immediately after approval.
+
+## Draft Pull Requests (GitHub)
+
+By default, PAC runs on draft PRs. To skip drafts:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "pull_request" && !body.pull_request.draft
+```
+
+PipelineRuns trigger only when the PR is marked "Ready for Review."
+
+## Monitoring Execution
+
+### Using tkn pac CLI
+
+View logs for the latest PipelineRun:
+
+```bash
+tkn pac logs -n my-namespace -L
+```
+
+Select a specific PipelineRun:
+
+```bash
+tkn pac logs -n my-namespace
+```
+
+You'll be prompted to choose from recent runs.
+
+### Using Tekton Dashboard
+
+If the Tekton Dashboard is installed, PAC posts a direct link in the GitHub Checks tab.
+
+### Using OpenShift Console
+
+On OpenShift, PAC links to the Pipeline view in the Console.
+
+### Git Provider UI
+
+<Tabs>
+<Tab title="GitHub">
+Check the **Checks** tab on pull requests:
+
+![GitHub Checks](/images/github-apps-rerun-checks.png)
+
+Each PipelineRun appears as a separate check with:
+- Status (pending, success, failure)
+- Task-by-task results
+- Log snippets
+- Execution time
+</Tab>
+
+<Tab title="GitLab">
+View pipeline status in the **Pipelines** tab:
+
+![GitLab Pipelines](/images/gitlab-pipelines-tab.png)
+
+Commit statuses show:
+- Overall pipeline status
+- Links to detailed logs
+</Tab>
+
+<Tab title="Forgejo/Gitea">
+Commit statuses appear on pull requests with:
+- Pass/fail status
+- Links to logs (if configured)
+</Tab>
+</Tabs>
+
+## Error Handling
+
+### YAML Parsing Errors
+
+If PAC encounters invalid YAML in `.tekton/`:
+
+1. **Comment on PR**: Details the error
+2. **Namespace Events**: Error logged in namespace event stream
+3. **Controller Logs**: Error appears in PAC controller logs
+
+**Example Error Comment**:
+
+![YAML Error Comment](/images/report-error-comment-on-bad-yaml.png)
+
+<Warning>
+YAML **syntax errors** halt execution of all PipelineRuns, even valid ones. Validation errors only affect the invalid PipelineRun.
+</Warning>
+
+**Check namespace events**:
+
+```bash
+kubectl get events -n my-namespace --sort-by='.lastTimestamp'
+```
+
+### Subsequent PR Updates
+
+Error comments are updated on new commits:
+- New errors replace the comment
+- Fixed errors leave the comment (not deleted)
+
+## Cancelling PipelineRuns
+
+### Cancel In-Progress (Automatic)
+
+Automatically cancel older runs when new commits are pushed:
+
+```yaml
+metadata:
+  annotations:
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+```
+
+**Behavior**:
+- Only cancels runs for the **same PR** or **same branch** (push events)
+- Different PRs are isolated from each other
+- Cancellation happens after the new PipelineRun starts
+- Not compatible with `concurrency_limit`
+
+**Closed PR Cancellation**: If a PR is closed/declined, all in-progress PipelineRuns are cancelled.
+
+### Cancel via GitOps Command
+
+Cancel all PipelineRuns on a PR:
+
+```text
+/cancel
+```
+
+Cancel a specific PipelineRun:
+
+```text
+/cancel my-pipeline-name
+```
+
+See [GitOps Commands](/guides/gitops-commands#cancelling-a-pipelinerun) for more details.
+
+## Restarting PipelineRuns
+
+### GitHub Apps: Re-Run Button
+
+Click **Re-Run** in the Checks tab:
+
+![GitHub Re-Run](/images/github-apps-rerun-checks.png)
+
+You can:
+- Re-run a single pipeline
+- Re-run all checks
+
+### GitOps Commands
+
+Restart failed PipelineRuns:
+
+```text
+/retest
+```
+
+Restart a specific PipelineRun:
+
+```text
+/retest my-pipeline-name
+```
+
+Force restart (even if succeeded):
+
+```text
+/test my-pipeline-name
+```
+
+See [GitOps Commands](/guides/gitops-commands) for complete details.
+
+## Skip CI
+
+Skip automatic pipeline execution by including skip commands in commit messages:
+
+```text
+docs: update README [skip ci]
+```
+
+**Supported skip commands** (case-sensitive):
+- `[skip ci]`
+- `[ci skip]`
+- `[skip tkn]`
+- `[tkn skip]`
+
+### How It Works
+
+<Tabs>
+<Tab title="Pull Requests">
+- No PipelineRuns created when PR opened/updated
+- Neutral status check posted ("CI skipped")
+- Can still trigger manually with GitOps commands
+</Tab>
+
+<Tab title="Push Events">
+- No PipelineRuns created for the push
+- Neutral status check on the commit
+- Can still trigger manually
+</Tab>
+</Tabs>
+
+### GitOps Override
+
+Skip commands can be overridden:
+
+```bash
+# Commit with skip command
+git commit -m "docs: update guide [skip ci]"
+git push
+# No pipelines run automatically
+
+# Later, manually trigger via PR comment:
+# /test
+```
+
+### When to Use Skip Commands
+
+<Tabs>
+<Tab title="Good Use Cases">
+- Documentation-only changes
+- README updates
+- Comment/formatting changes
+- WIP commits
+- Minor typo fixes
+</Tab>
+
+<Tab title="Avoid For">
+- Code changes affecting functionality
+- CI/CD pipeline definition changes
+- Dependency updates
+- Security fixes
+</Tab>
+</Tabs>
+
+## Execution Namespace
+
+PipelineRuns always execute in the **namespace of the Repository CR**.
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: my-repo
+  namespace: my-namespace  # PipelineRuns run here
+spec:
+  url: "https://github.com/owner/repo"
+```
+
+For security, explicitly target the namespace in PipelineRuns:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/target-namespace: "my-namespace"
+```
+
+## Status Updates
+
+### GitHub
+
+**GitHub Apps**:
+- Detailed Checks with task-by-task status
+- Log snippets on failures
+- Task execution time
+- Secrets automatically redacted
+
+**GitHub Webhooks**:
+- Commit status (pending, success, failure)
+- Link to logs
+
+### GitLab
+
+Commit status updates:
+1. Try source project (fork)
+2. Fallback to target project
+3. Comment if both fail
+
+### Forgejo/Gitea
+
+Commit status on pull requests with overall pass/fail.
+
+## Best Practices
+
+<Steps>
+
+### Use OWNERS files
+
+Define authorized users in version control:
+
+```yaml OWNERS
+approvers:
+  - team-lead
+  - senior-dev
+reviewers:
+  - developer1
+  - developer2
+```
+
+### Configure comment strategy
+
+Reduce notification noise:
+
+```yaml
+spec:
+  settings:
+    github:
+      comment_strategy: "update"  # Single comment, updated on each run
+```
+
+### Set concurrency limits
+
+Prevent resource exhaustion:
+
+```yaml
+spec:
+  concurrency_limit: 3
+```
+
+### Enable auto-cancellation
+
+Save resources on rapid commits:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/cancel-in-progress: "true"
+```
+
+### Use default branch provenance
+
+Enforce pipeline review process:
+
+```yaml
+spec:
+  settings:
+    pipelinerun_provenance: "default_branch"
+```
+
+</Steps>
+
+## Troubleshooting
+
+### PipelineRuns not triggering
+
+<Steps>
+
+### Check authorization
+
+Verify the user is authorized:
+
+```bash
+# Check OWNERS file
+curl https://raw.githubusercontent.com/owner/repo/main/OWNERS
+```
+
+### Verify Repository CR
+
+```bash
+kubectl get repository -n my-namespace
+kubectl describe repository my-repo -n my-namespace
+```
+
+### Check event matching
+
+Ensure annotations match the event:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-event: "[pull_request]"  # Must match event type
+  pipelinesascode.tekton.dev/on-target-branch: "[main]"  # Must match target branch
+```
+
+### Review PAC controller logs
+
+```bash
+kubectl logs -n pipelines-as-code -l app.kubernetes.io/name=controller
+```
+
+</Steps>
+
+### GitHub bot issues
+
+If GitHub bots aren't triggering:
+
+1. Bots are silently ignored unless authorized
+2. Add bots to OWNERS or Repository CR policy:
+
+```yaml
+spec:
+  settings:
+    policy:
+      pull_request:
+        - "dependabot[bot]"
+        - "renovate[bot]"
+```
+
+### Draft PR not skipping
+
+Add CEL expression:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "pull_request" && !body.pull_request.draft
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GitOps Commands" icon="terminal" href="/guides/gitops-commands">
+    Control pipelines with /test, /retest, and /cancel commands
+  </Card>
+  <Card title="Event Matching" icon="filter" href="/guides/event-matching">
+    Advanced event matching with CEL expressions
+  </Card>
+  <Card title="Pipeline Resolution" icon="puzzle-piece" href="/guides/pipeline-resolution">
+    Remote task and pipeline resolution
+  </Card>
+  <Card title="Repository CRD" icon="database" href="/guides/repository-crd">
+    Configure authorization policies
+  </Card>
+</CardGroup>

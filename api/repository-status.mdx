@@ -1,0 +1,233 @@
+---
+title: 'Repository.status'
+description: 'Reference for Repository status fields'
+---
+
+The `pipelinerun_status` field contains status information for pipeline runs executed for this repository. It's an array of `RepositoryRunStatus` objects, with the most recent runs typically appearing last.
+
+## RepositoryRunStatus
+
+Each status entry represents a single PipelineRun execution.
+
+<ResponseField name="pipelineRunName" type="string">
+  Name of the PipelineRun resource.
+
+  ```yaml
+  pipelinerun_status:
+    - pipelineRunName: "my-repo-run-abc123"
+  ```
+</ResponseField>
+
+<ResponseField name="startTime" type="metav1.Time">
+  Time when the PipelineRun actually started execution. Uses Kubernetes time format (RFC3339).
+
+  ```yaml
+  pipelinerun_status:
+    - startTime: "2024-03-01T10:30:00Z"
+  ```
+</ResponseField>
+
+<ResponseField name="completionTime" type="metav1.Time">
+  Time when the PipelineRun completed execution. Uses Kubernetes time format (RFC3339).
+
+  ```yaml
+  pipelinerun_status:
+    - completionTime: "2024-03-01T10:45:00Z"
+  ```
+</ResponseField>
+
+<ResponseField name="sha" type="string">
+  Git commit SHA that was tested in this PipelineRun.
+
+  ```yaml
+  pipelinerun_status:
+    - sha: "abc123def456"
+  ```
+</ResponseField>
+
+<ResponseField name="sha_url" type="string">
+  URL to view the commit SHA in the Git provider UI.
+
+  ```yaml
+  pipelinerun_status:
+    - sha_url: "https://github.com/owner/repo/commit/abc123"
+  ```
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Title of the commit SHA that was tested (typically the first line of the commit message).
+
+  ```yaml
+  pipelinerun_status:
+    - title: "Fix authentication bug"
+  ```
+</ResponseField>
+
+<ResponseField name="logurl" type="string">
+  Full URL to the logs for this PipelineRun.
+
+  ```yaml
+  pipelinerun_status:
+    - logurl: "https://tekton.example.com/logs/my-run"
+  ```
+</ResponseField>
+
+<ResponseField name="target_branch" type="string">
+  Target branch for this run (e.g., the base branch of a pull request).
+
+  ```yaml
+  pipelinerun_status:
+    - target_branch: "main"
+  ```
+</ResponseField>
+
+<ResponseField name="event_type" type="string">
+  Event type that triggered this run (e.g., `push`, `pull_request`).
+
+  ```yaml
+  pipelinerun_status:
+    - event_type: "pull_request"
+  ```
+</ResponseField>
+
+<ResponseField name="conditions" type="[]Condition">
+  Conditions describe the current state of the PipelineRun. This follows the standard Knative Conditions pattern.
+
+  <Expandable title="Condition Fields">
+    <ResponseField name="type" type="string">
+      Type of condition. Typically `Succeeded` for PipelineRun completion status.
+    </ResponseField>
+
+    <ResponseField name="status" type="string">
+      Status of the condition. Can be `True`, `False`, or `Unknown`.
+    </ResponseField>
+
+    <ResponseField name="reason" type="string">
+      Machine-readable reason for the condition status.
+    </ResponseField>
+
+    <ResponseField name="message" type="string">
+      Human-readable message with details about the condition.
+    </ResponseField>
+  </Expandable>
+
+  ```yaml
+  pipelinerun_status:
+    - conditions:
+        - type: Succeeded
+          status: "True"
+          reason: Succeeded
+          message: "All tasks completed successfully"
+  ```
+</ResponseField>
+
+<ResponseField name="failure_reason" type="map[string]TaskInfos">
+  Information about tasks, particularly useful for failed runs. Maps task names to their failure information.
+
+  <Expandable title="TaskInfos Fields">
+    <ResponseField name="name" type="string">
+      Name of the task.
+    </ResponseField>
+
+    <ResponseField name="message" type="string">
+      Error or status message from the task.
+    </ResponseField>
+
+    <ResponseField name="log_snippet" type="string">
+      Snippet of logs from the failed task.
+    </ResponseField>
+
+    <ResponseField name="reason" type="string">
+      Reason for task failure.
+    </ResponseField>
+
+    <ResponseField name="display_name" type="string">
+      Human-friendly display name for the task.
+    </ResponseField>
+
+    <ResponseField name="completion_time" type="metav1.Time">
+      When the task completed.
+    </ResponseField>
+  </Expandable>
+
+  ```yaml
+  pipelinerun_status:
+    - failure_reason:
+        build-task:
+          name: "build-task"
+          message: "Build failed: compilation error"
+          log_snippet: "error: undefined reference to 'main'"
+          reason: "BuildFailed"
+          display_name: "Build Application"
+          completion_time: "2024-03-01T10:42:00Z"
+  ```
+</ResponseField>
+
+## Complete Example
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: example-repo
+  namespace: pipelines-as-code
+spec:
+  url: "https://github.com/organization/repository"
+pipelinerun_status:
+  - pipelineRunName: "example-repo-run-xyz789"
+    startTime: "2024-03-01T10:30:00Z"
+    completionTime: "2024-03-01T10:45:00Z"
+    sha: "abc123def456789"
+    sha_url: "https://github.com/organization/repository/commit/abc123def456789"
+    title: "Add new feature for user authentication"
+    logurl: "https://tekton.example.com/namespaces/pipelines-as-code/pipelineruns/example-repo-run-xyz789"
+    target_branch: "main"
+    event_type: "pull_request"
+    conditions:
+      - type: Succeeded
+        status: "True"
+        reason: Succeeded
+        message: "Tasks Completed: 3 (Failed: 0, Cancelled: 0), Skipped: 0"
+        lastTransitionTime: "2024-03-01T10:45:00Z"
+  - pipelineRunName: "example-repo-run-abc456"
+    startTime: "2024-03-01T09:00:00Z"
+    completionTime: "2024-03-01T09:10:00Z"
+    sha: "def456abc789012"
+    sha_url: "https://github.com/organization/repository/commit/def456abc789012"
+    title: "Fix build script"
+    logurl: "https://tekton.example.com/namespaces/pipelines-as-code/pipelineruns/example-repo-run-abc456"
+    target_branch: "main"
+    event_type: "push"
+    conditions:
+      - type: Succeeded
+        status: "False"
+        reason: Failed
+        message: "TaskRun example-repo-run-abc456-build failed"
+        lastTransitionTime: "2024-03-01T09:10:00Z"
+    failure_reason:
+      build:
+        name: "build"
+        message: "Build script failed with exit code 1"
+        log_snippet: |
+          + npm run build
+          ERROR: Module not found
+          npm ERR! code 1
+        reason: "BuildScriptFailed"
+        display_name: "Build Application"
+        completion_time: "2024-03-01T09:10:00Z"
+```
+
+## Accessing Status
+
+You can query the status using `kubectl`:
+
+```bash
+# Get the full status
+kubectl get repository example-repo -o jsonpath='{.pipelinerun_status}' | jq .
+
+# Get the latest run status
+kubectl get repository example-repo -o jsonpath='{.pipelinerun_status[-1]}' | jq .
+
+# Get the last run's success status
+kubectl get repository example-repo -o jsonpath='{.pipelinerun_status[-1].conditions[?(@.type=="Succeeded")].status}'
+```

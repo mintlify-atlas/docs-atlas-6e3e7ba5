@@ -1,0 +1,546 @@
+---
+title: Multiple Controllers
+description: Run multiple Pipelines as Code controllers for different GitHub instances
+---
+
+<Note>
+  Multi-GitHub Application support is a **Technology Preview** feature.
+</Note>
+
+Pipelines as Code supports running multiple controller instances on the same cluster, enabling integration with different GitHub instances (such as public GitHub and GitHub Enterprise Server) or separate GitHub Apps.
+
+## Use Cases
+
+- **Multiple GitHub instances** - Connect to both github.com and GitHub Enterprise Server
+- **Multiple GitHub Apps** - Use different GitHub Apps for different organizations
+- **Isolation** - Separate production and development GitHub integrations
+- **Multi-tenancy** - Provide dedicated controllers for different teams
+
+## Architecture
+
+Each GitHub application requires its own controller deployment with:
+
+<ParamField path="Controller Deployment" type="Deployment">
+  Dedicated controller instance running the `pipelines-as-code-controller` image
+</ParamField>
+
+<ParamField path="Service" type="Service">
+  Kubernetes Service to expose the controller's webhook endpoint
+</ParamField>
+
+<ParamField path="Network Exposure" type="Ingress/Route">
+  Ingress (Kubernetes) or Route (OpenShift) to make webhooks accessible from GitHub
+</ParamField>
+
+<ParamField path="Secret" type="Secret">
+  Contains GitHub App credentials:
+  - `private-key` - GitHub App private key
+  - `application_id` - GitHub App ID
+  - `webhook_secret` - Webhook secret
+</ParamField>
+
+<ParamField path="ConfigMap" type="ConfigMap">
+  Application-specific configuration settings
+</ParamField>
+
+<Note>
+  While each GitHub App requires its own controller, only **one watcher** component is needed cluster-wide. The watcher monitors all PipelineRuns regardless of which controller created them.
+</Note>
+
+## Controller Configuration
+
+Each controller is configured using environment variables:
+
+<ParamField path="PAC_CONTROLLER_LABEL" type="string" required>
+  Unique identifier for this controller instance. Used to distinguish between multiple controllers.
+  
+  Example: `github-enterprise`, `github-public`, `dev-github`
+</ParamField>
+
+<ParamField path="PAC_CONTROLLER_SECRET" type="string" required>
+  Name of the Secret containing GitHub App credentials.
+  
+  Example: `gh-enterprise-secret`
+</ParamField>
+
+<ParamField path="PAC_CONTROLLER_CONFIGMAP" type="string">
+  Name of the ConfigMap with controller-specific settings. Optional if using default settings.
+  
+  Example: `gh-enterprise-config`
+</ParamField>
+
+## Deployment Methods
+
+You can deploy additional controllers using:
+
+1. **Automated with startpaac** (recommended for CI/testing)
+2. **Manual with second-controller.py script** (recommended for production)
+3. **Manual YAML** (for complete customization)
+
+## Method 1: Automated with startpaac
+
+[startpaac](https://github.com/openshift-pipelines/startpaac) automatically installs and configures second controllers in CI mode.
+
+### Prerequisites
+
+- startpaac installed and configured
+- GitHub App credentials stored in a directory
+
+### Setup Secret Directory
+
+Create a directory with GitHub App credentials:
+
+```bash
+mkdir -p ~/secrets-second
+
+echo "12345" > ~/secrets-second/github-application-id
+echo "-----BEGIN RSA PRIVATE KEY-----
+...
+-----END RSA PRIVATE KEY-----" > ~/secrets-second/github-private-key
+echo "my-webhook-secret" > ~/secrets-second/webhook.secret
+
+# Optional: For webhook tunneling with smee.io
+echo "https://smee.io/your-channel" > ~/secrets-second/smee
+```
+
+### Run startpaac
+
+```bash
+# Export secret directory location
+export PAC_SECOND_SECRET_FOLDER=~/secrets-second
+
+# Run startpaac in CI mode
+cd startpaac
+./startpaac --ci -a
+```
+
+startpaac will:
+- Generate TLS certificates for the second controller domain
+- Create Kubernetes secrets from the secret folder
+- Deploy the second controller with ingress/route
+- Configure webhook tunneling if smee URL is provided
+
+## Method 2: Using second-controller.py Script
+
+The `second-controller.py` script simplifies deployment by generating all necessary YAML.
+
+### Script Location
+
+```bash
+# Clone the repository if needed
+git clone https://github.com/openshift-pipelines/pipelines-as-code.git
+cd pipelines-as-code
+
+# Script is located at:
+./hack/second-controller.py
+```
+
+### Basic Usage
+
+```bash
+python3 hack/second-controller.py <LABEL> | kubectl apply -f -
+```
+
+**Example:**
+
+```bash
+# Deploy controller for GitHub Enterprise with label "ghe"
+python3 hack/second-controller.py ghe | kubectl apply -f -
+```
+
+### Script Options
+
+```
+Usage: second-controller.py [-h] [--configmap CONFIGMAP]
+                            [--ingress-domain INGRESS_DOMAIN]
+                            [--secret SECRET]
+                            [--controller-image CONTROLLER_IMAGE]
+                            [--gosmee-image GOSMEE_IMAGE]
+                            [--smee-url SMEE_URL]
+                            [--namespace NAMESPACE]
+                            [--openshift-route]
+                            LABEL
+```
+
+<ParamField path="LABEL" type="string" required>
+  Unique identifier for the controller (positional argument)
+</ParamField>
+
+<ParamField path="--configmap" type="string" default="<LABEL>-configmap">
+  Name of the ConfigMap for controller settings
+</ParamField>
+
+<ParamField path="--secret" type="string" default="<LABEL>-secret">
+  Name of the Secret containing GitHub App credentials
+</ParamField>
+
+<ParamField path="--ingress-domain" type="string">
+  Create Kubernetes Ingress with this domain (e.g., `ghe.example.com`)
+</ParamField>
+
+<ParamField path="--openshift-route" type="boolean">
+  Create OpenShift Route instead of Ingress
+</ParamField>
+
+<ParamField path="--controller-image" type="string" default="ghcr.io/openshift-pipelines/pipelines-as-code-controller:stable">
+  Controller container image. Use `ko` for local builds.
+</ParamField>
+
+<ParamField path="--smee-url" type="string">
+  Deploy Gosmee sidecar for webhook tunneling via smee.io
+</ParamField>
+
+<ParamField path="--namespace" type="string" default="pipelines-as-code">
+  Kubernetes namespace for deployment
+</ParamField>
+
+### Example Scenarios
+
+#### Kubernetes with Ingress
+
+```bash
+python3 hack/second-controller.py github-enterprise \
+  --ingress-domain "pac-ghe.k8s.example.com" \
+  --secret ghe-app-secret \
+  --namespace pipelines-as-code | kubectl apply -f -
+```
+
+#### OpenShift with Route
+
+```bash
+python3 hack/second-controller.py enterprise \
+  --openshift-route \
+  --secret enterprise-github-secret \
+  --configmap enterprise-config | oc apply -f -
+```
+
+#### Local Development with Ko
+
+```bash
+export KO_DOCKER_REPO=quay.io/myusername
+
+ko apply -f <(
+  python3 hack/second-controller.py dev \
+  --controller-image=ko \
+  --namespace pipelines-as-code
+)
+```
+
+#### Webhook Tunneling with Smee.io
+
+For development or when the cluster is not publicly accessible:
+
+```bash
+python3 hack/second-controller.py test \
+  --smee-url https://smee.io/your-unique-channel | kubectl apply -f -
+```
+
+This deploys a Gosmee sidecar that tunnels webhooks from smee.io to the controller.
+
+## Method 3: Manual YAML Deployment
+
+### Step 1: Create Secret
+
+Create a Secret with GitHub App credentials:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ghe-secret
+  namespace: pipelines-as-code
+type: Opaque
+stringData:
+  github-application-id: "123456"
+  github-private-key: |
+    -----BEGIN RSA PRIVATE KEY-----
+    MIIEpAIBAAKCAQEA...
+    -----END RSA PRIVATE KEY-----
+  webhook.secret: "your-webhook-secret-here"
+```
+
+Apply the secret:
+
+```bash
+kubectl apply -f ghe-secret.yaml
+```
+
+### Step 2: Create ConfigMap (Optional)
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ghe-config
+  namespace: pipelines-as-code
+data:
+  application-name: "GHE Pipelines as Code"
+  # Add any other controller-specific settings
+```
+
+### Step 3: Create Controller Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pac-controller-ghe
+  namespace: pipelines-as-code
+  labels:
+    app.kubernetes.io/name: controller
+    app.kubernetes.io/instance: ghe
+    app.kubernetes.io/part-of: pipelines-as-code
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: controller
+      app.kubernetes.io/instance: ghe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: controller
+        app.kubernetes.io/instance: ghe
+    spec:
+      serviceAccountName: pipelines-as-code-controller
+      containers:
+        - name: pac-controller
+          image: ghcr.io/openshift-pipelines/pipelines-as-code-controller:stable
+          env:
+            - name: PAC_CONTROLLER_LABEL
+              value: "ghe"
+            - name: PAC_CONTROLLER_SECRET
+              value: "ghe-secret"
+            - name: PAC_CONTROLLER_CONFIGMAP
+              value: "ghe-config"
+          ports:
+            - containerPort: 8080
+              name: http
+```
+
+### Step 4: Create Service
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: pac-controller-ghe
+  namespace: pipelines-as-code
+spec:
+  selector:
+    app.kubernetes.io/name: controller
+    app.kubernetes.io/instance: ghe
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+```
+
+### Step 5: Create Ingress or Route
+
+**Kubernetes Ingress:**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pac-controller-ghe
+  namespace: pipelines-as-code
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts:
+        - pac-ghe.example.com
+      secretName: pac-ghe-tls
+  rules:
+    - host: pac-ghe.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pac-controller-ghe
+                port:
+                  number: 8080
+```
+
+**OpenShift Route:**
+
+```yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: pac-controller-ghe
+  namespace: pipelines-as-code
+spec:
+  to:
+    kind: Service
+    name: pac-controller-ghe
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+```
+
+## Environment Variable Customization
+
+The script respects these environment variables:
+
+```bash
+export PAC_CONTROLLER_LABEL="my-ghe"              # Controller identifier
+export PAC_CONTROLLER_TARGET_NS="pipelines-as-code" # Target namespace
+export PAC_CONTROLLER_SECRET="my-ghe-secret"      # Secret name
+export PAC_CONTROLLER_CONFIGMAP="my-ghe-config"   # ConfigMap name
+export PAC_CONTROLLER_SMEE_URL="https://smee.io/channel" # Smee URL
+export PAC_CONTROLLER_IMAGE="ghcr.io/..."         # Controller image
+
+python3 hack/second-controller.py my-ghe | kubectl apply -f -
+```
+
+## Verifying Deployment
+
+### Check Controller Deployment
+
+```bash
+# List all controller deployments
+kubectl get deployments -n pipelines-as-code -l app.kubernetes.io/name=controller
+
+# Check specific controller status
+kubectl get deployment pac-controller-ghe -n pipelines-as-code
+
+# View controller logs
+kubectl logs -n pipelines-as-code deployment/pac-controller-ghe -f
+```
+
+### Check Service and Ingress
+
+```bash
+# Verify service
+kubectl get svc -n pipelines-as-code
+
+# Check ingress
+kubectl get ingress -n pipelines-as-code
+
+# Or route on OpenShift
+oc get route -n pipelines-as-code
+```
+
+### Test Webhook Endpoint
+
+```bash
+# Get the webhook URL
+kubectl get ingress pac-controller-ghe -n pipelines-as-code -o jsonpath='{.spec.rules[0].host}'
+
+# Test endpoint
+curl https://pac-ghe.example.com/
+```
+
+## Configuring GitHub App
+
+After deploying the controller, configure your GitHub App:
+
+1. **Set Webhook URL** - Use the Ingress/Route URL:
+   ```
+   https://pac-ghe.example.com
+   ```
+
+2. **Set Webhook Secret** - Match the value in your Secret
+
+3. **Configure Permissions** - Same as primary GitHub App
+
+4. **Subscribe to Events** - Same as primary GitHub App
+
+## Repository Assignment
+
+Repositories automatically use the correct controller based on the GitHub App installation. No manual configuration is needed in the Repository CR.
+
+<Note>
+  When a webhook arrives, the controller that owns the GitHub App processes it. Multiple controllers can coexist without conflict.
+</Note>
+
+## Troubleshooting
+
+### Controller Not Starting
+
+Check environment variables:
+
+```bash
+kubectl get deployment pac-controller-ghe -n pipelines-as-code -o yaml | grep -A5 env
+```
+
+Verify secret exists:
+
+```bash
+kubectl get secret ghe-secret -n pipelines-as-code
+```
+
+Check controller logs:
+
+```bash
+kubectl logs -n pipelines-as-code deployment/pac-controller-ghe
+```
+
+### Webhooks Not Received
+
+Verify ingress/route is accessible:
+
+```bash
+curl -v https://pac-ghe.example.com/
+```
+
+Check GitHub App webhook deliveries in GitHub UI
+
+Verify webhook secret matches:
+
+```bash
+kubectl get secret ghe-secret -n pipelines-as-code -o jsonpath='{.data.webhook\.secret}' | base64 -d
+```
+
+### Wrong Controller Processing Events
+
+Verify `PAC_CONTROLLER_LABEL` is unique:
+
+```bash
+kubectl get deployments -n pipelines-as-code \
+  -l app.kubernetes.io/name=controller \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].env[?(@.name=="PAC_CONTROLLER_LABEL")].value}{"\n"}{end}'
+```
+
+Ensure each controller uses a different GitHub App ID:
+
+```bash
+kubectl get secret ghe-secret -n pipelines-as-code -o jsonpath='{.data.github-application-id}' | base64 -d
+```
+
+## Best Practices
+
+<Note>
+  **Multi-Controller Setup:**
+  - Use descriptive labels (`github-enterprise`, not `controller2`)
+  - Keep one watcher instance for all controllers
+  - Use separate secrets for each GitHub App
+  - Document which controller serves which GitHub instance
+  - Monitor all controllers with unified metrics
+  - Use consistent naming: `pac-controller-<label>`
+</Note>
+
+<Warning>
+  Do not reuse the same GitHub App across multiple controllers. Each controller needs its own GitHub App installation.
+</Warning>
+
+## Scaling Considerations
+
+- **Single Watcher** - Only one watcher is needed regardless of controller count
+- **Controller Replicas** - Each controller can be scaled independently
+- **Resource Limits** - Set appropriate resource requests/limits per controller
+- **Namespace Isolation** - Controllers can run in separate namespaces if needed
+
+## See Also
+
+- [GitHub App Installation](/install/github_apps) - Setting up GitHub Apps
+- [Configuration](/operations/configuration) - ConfigMap settings
+- [Logging](/operations/logging) - Debug multi-controller setup
+- [startpaac Documentation](https://github.com/openshift-pipelines/startpaac) - Automated testing tool

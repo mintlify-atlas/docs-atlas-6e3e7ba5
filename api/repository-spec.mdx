@@ -1,0 +1,262 @@
+---
+title: 'Repository.spec'
+description: 'Reference for Repository specification fields'
+---
+
+The `spec` field defines the desired state of a Repository, including its URL, Git provider configuration, and operational settings.
+
+## Fields
+
+<ParamField path="url" type="string" required>
+  URL of the repository. Must be a valid HTTP/HTTPS Git repository URL that Pipelines as Code will use to clone and fetch pipeline definitions from.
+
+  ```yaml
+  spec:
+    url: "https://github.com/owner/repository"
+  ```
+</ParamField>
+
+<ParamField path="concurrency_limit" type="integer">
+  Maximum number of concurrent PipelineRuns that can run for this repository. This helps prevent resource exhaustion when many events trigger pipelines simultaneously.
+
+  Minimum value: 1
+
+  ```yaml
+  spec:
+    concurrency_limit: 5
+  ```
+</ParamField>
+
+<ParamField path="git_provider" type="GitProvider">
+  Git provider details specific to configuration. Contains authentication, API endpoints, and provider type information needed to interact with the Git service.
+
+  <Expandable title="GitProvider Fields">
+    <ParamField path="git_provider.type" type="string">
+      Type of Git provider. Determines which Git provider API and authentication flow to use.
+
+      Supported values:
+      - `github` - GitHub.com or GitHub Enterprise
+      - `gitlab` - GitLab.com or self-hosted GitLab
+      - `bitbucket-datacenter` - Bitbucket Data Center (self-hosted)
+      - `bitbucket-cloud` - Bitbucket Cloud (bitbucket.org)
+      - `forgejo` - Forgejo instances
+      - `gitea` - Gitea instances (alias for forgejo, kept for backwards compatibility)
+
+      ```yaml
+      git_provider:
+        type: github
+      ```
+    </ParamField>
+
+    <ParamField path="git_provider.url" type="string">
+      URL of the Git provider API endpoint. This is the base URL for API requests to the Git provider (e.g., `https://api.github.com` for GitHub or a custom GitLab instance URL).
+
+      ```yaml
+      git_provider:
+        url: "https://gitlab.example.com"
+      ```
+    </ParamField>
+
+    <ParamField path="git_provider.user" type="string">
+      Username to use for authentication when using basic auth or token-based authentication methods. Not used for GitHub Apps authentication.
+
+      ```yaml
+      git_provider:
+        user: "pac-bot"
+      ```
+    </ParamField>
+
+    <ParamField path="git_provider.secret" type="Secret">
+      Secret reference for authentication with the Git provider. Contains the token, password, or private key used to authenticate requests to the Git provider API.
+
+      <Expandable title="Secret Fields">
+        <ParamField path="secret.name" type="string" required>
+          Name of the Kubernetes secret.
+        </ParamField>
+
+        <ParamField path="secret.key" type="string">
+          Key within the secret containing the value.
+        </ParamField>
+      </Expandable>
+
+      ```yaml
+      git_provider:
+        secret:
+          name: github-token
+          key: token
+      ```
+    </ParamField>
+
+    <ParamField path="git_provider.webhook_secret" type="Secret">
+      Secret reference for webhook validation. Contains the shared secret used to validate that incoming webhooks are legitimate and coming from the Git provider.
+
+      ```yaml
+      git_provider:
+        webhook_secret:
+          name: webhook-secret
+          key: secret
+      ```
+    </ParamField>
+  </Expandable>
+
+  ```yaml
+  spec:
+    git_provider:
+      type: github
+      url: "https://github.com"
+      user: "pac-bot"
+      secret:
+        name: github-token
+        key: token
+  ```
+</ParamField>
+
+<ParamField path="incoming" type="[]Incoming">
+  Incoming webhook configurations. Each configuration specifies how to handle external webhook requests that don't come directly from the primary Git provider.
+
+  <Expandable title="Incoming Fields">
+    <ParamField path="incoming[].type" type="string" required>
+      Type of the incoming webhook. Currently only `webhook-url` is supported, which allows external systems to trigger PipelineRuns via generic webhook requests.
+    </ParamField>
+
+    <ParamField path="incoming[].secret" type="Secret" required>
+      Secret for the incoming webhook authentication. This secret is used to validate that webhook requests are coming from authorized sources.
+
+      <Expandable title="Secret Fields">
+        <ParamField path="secret.name" type="string" required>
+          Name of the Kubernetes secret.
+        </ParamField>
+
+        <ParamField path="secret.key" type="string">
+          Key within the secret containing the value.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField path="incoming[].params" type="[]string">
+      Parameter names to extract from the webhook payload. These parameters will be made available to the PipelineRuns triggered by this webhook.
+    </ParamField>
+
+    <ParamField path="incoming[].targets" type="[]string">
+      Target branches for this webhook. When specified, only webhook events targeting these branches will trigger PipelineRuns.
+    </ParamField>
+  </Expandable>
+
+  ```yaml
+  spec:
+    incoming:
+      - type: webhook-url
+        secret:
+          name: webhook-secret
+          key: token
+        params:
+          - branch
+          - revision
+        targets:
+          - main
+          - develop
+  ```
+</ParamField>
+
+<ParamField path="params" type="[]Params">
+  Repository level parameters that can be referenced in PipelineRuns. These parameters can be used as default values or configured for specific events.
+
+  <Expandable title="Params Fields">
+    <ParamField path="params[].name" type="string" required>
+      Name of the parameter. This is the key that will be used to reference this parameter in PipelineRun definitions through the `{{ name }}` syntax.
+    </ParamField>
+
+    <ParamField path="params[].value" type="string">
+      Value of the parameter. The literal value to be provided to the PipelineRun. This field is mutually exclusive with `secret_ref`.
+    </ParamField>
+
+    <ParamField path="params[].secret_ref" type="Secret">
+      Secret reference for the parameter value. Use this when the parameter contains sensitive information that should not be stored directly in the Repository CR. This field is mutually exclusive with `value`.
+
+      <Expandable title="Secret Fields">
+        <ParamField path="secret.name" type="string" required>
+          Name of the Kubernetes secret.
+        </ParamField>
+
+        <ParamField path="secret.key" type="string">
+          Key within the secret containing the value.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField path="params[].filter" type="string">
+      Filter defines when this parameter applies. It can be used to conditionally apply parameters based on the event type, branch name, or other attributes.
+    </ParamField>
+  </Expandable>
+
+  ```yaml
+  spec:
+    params:
+      - name: deployment_env
+        value: production
+        filter: "event == 'push' && target_branch == 'main'"
+      - name: api_key
+        secret_ref:
+          name: api-credentials
+          key: key
+  ```
+</ParamField>
+
+<ParamField path="settings" type="Settings">
+  Configuration settings for the repository, including authorization policies, provider-specific configuration, and provenance settings. See [Settings Reference](/api/settings) for detailed documentation.
+
+  ```yaml
+  spec:
+    settings:
+      pipelinerun_provenance: "source"
+      policy:
+        ok_to_test:
+          - "trusted-user"
+  ```
+</ParamField>
+
+## Complete Example
+
+```yaml
+spec:
+  url: "https://github.com/organization/repository"
+  concurrency_limit: 3
+  git_provider:
+    type: github
+    url: "https://github.com"
+    user: "pac-bot"
+    secret:
+      name: github-token
+      key: token
+    webhook_secret:
+      name: webhook-secret
+      key: secret
+  incoming:
+    - type: webhook-url
+      secret:
+        name: incoming-webhook-secret
+        key: token
+      params:
+        - version
+        - environment
+      targets:
+        - main
+  params:
+    - name: cluster_name
+      value: "production-cluster"
+    - name: registry_token
+      secret_ref:
+        name: registry-credentials
+        key: token
+      filter: "event == 'push'"
+  settings:
+    pipelinerun_provenance: "source"
+    policy:
+      ok_to_test:
+        - "maintainer-user"
+        - "trusted-contributor"
+      pull_request:
+        - "external-contributor"
+    github:
+      comment_strategy: "update"
+```

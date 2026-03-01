@@ -1,0 +1,423 @@
+---
+title: tkn pac repository
+description: Manage Pipelines-as-Code Repository custom resources
+---
+
+# tkn pac repository
+
+Manage Pipelines-as-Code Repository custom resources with list and delete operations.
+
+## Available Commands
+
+- [`list`](#list) - List Repository CRDs
+- [`delete`](#delete) - Delete Repository CRDs
+
+---
+
+## list
+
+List Pipelines-as-Code repositories and their latest PipelineRun status.
+
+### Synopsis
+
+```bash
+tkn pac list [flags]
+tkn pac ls [flags]
+```
+
+### Description
+
+The `list` command displays all Repository CRDs and their current or last PipelineRun status. It shows:
+
+- Repository name and URL
+- Latest commit SHA
+- Start time and duration
+- PipelineRun status
+- Clickable links to logs/console (in modern terminals)
+
+### Usage Examples
+
+<CodeGroup>
+
+```bash Current Namespace
+# List repositories in current namespace
+tkn pac list
+```
+
+```bash All Namespaces
+# List repositories across all namespaces
+tkn pac list --all-namespaces
+```
+
+```bash Specific Namespace
+# List repositories in specific namespace
+tkn pac list -n production
+```
+
+```bash With Label Selector
+# Filter by labels
+tkn pac list --selectors app=myapp
+tkn pac list -l environment=production,tier=backend
+```
+
+```bash Real Time Format
+# Show RFC3339 timestamps instead of relative time
+tkn pac list --use-realtime
+```
+
+```bash No Headers
+# Output without headers (useful for scripting)
+tkn pac list --no-headers
+```
+
+</CodeGroup>
+
+### Flags
+
+<ParamField path="-A, --all-namespaces" type="boolean" default="false">
+  List repositories across all namespaces
+</ParamField>
+
+<ParamField path="-n, --namespace" type="string">
+  Namespace scope for the request
+</ParamField>
+
+<ParamField path="-l, --selectors" type="string">
+  Label selector to filter repositories (supports `=`, `==`, `!=`)
+  
+  Examples:
+  - `app=myapp`
+  - `environment=production,tier=backend`
+  - `team!=external`
+</ParamField>
+
+<ParamField path="--use-realtime" type="boolean" default="false">
+  Display timestamps as RFC3339 instead of relative time
+</ParamField>
+
+<ParamField path="--no-headers" type="boolean" default="false">
+  Don't print column headers
+</ParamField>
+
+### Output Example
+
+```bash
+$ tkn pac list
+
+NAME            URL                                 SHA      STARTED       DURATION  STATUS
+myorg-api       https://github.com/myorg/api        a3c5e8d  2 hours ago   5m 23s    Succeeded
+myorg-frontend  https://github.com/myorg/frontend   b1d4f2a  30 mins ago   3m 45s    Running
+myorg-docs      https://github.com/myorg/docs       c7e9a1b  1 day ago     2m 11s    Failed
+```
+
+With `--all-namespaces`:
+
+```bash
+$ tkn pac list -A
+
+NAME            URL                                 SHA      STARTED       DURATION  NAMESPACE          STATUS
+myorg-api       https://github.com/myorg/api        a3c5e8d  2 hours ago   5m 23s    production         Succeeded
+myorg-frontend  https://github.com/myorg/frontend   b1d4f2a  30 mins ago   3m 45s    development        Running
+myorg-docs      https://github.com/myorg/docs       c7e9a1b  1 day ago     2m 11s    documentation      Failed
+```
+
+With `--use-realtime`:
+
+```bash
+$ tkn pac list --use-realtime
+
+NAME            URL                                 SHA      STARTED                    DURATION  STATUS
+myorg-api       https://github.com/myorg/api        a3c5e8d  2024-03-15T14:30:00Z      5m 23s    Succeeded
+myorg-frontend  https://github.com/myorg/frontend   b1d4f2a  2024-03-15T16:45:00Z      3m 45s    Running
+```
+
+### Column Descriptions
+
+| Column | Description |
+|--------|-------------|
+| **NAME** | Repository CRD name |
+| **URL** | Git repository URL |
+| **SHA** | Latest commit SHA (first 7 characters) |
+| **STARTED** | When the PipelineRun started (relative or absolute) |
+| **DURATION** | How long the PipelineRun ran/is running |
+| **NAMESPACE** | Namespace (only with `-A`) |
+| **STATUS** | PipelineRun status (Succeeded, Failed, Running, etc.) |
+
+### Status Values
+
+| Status | Description |
+|--------|-------------|
+| **Succeeded** | PipelineRun completed successfully |
+| **Failed** | PipelineRun failed |
+| **Running** | PipelineRun currently executing |
+| **Pending** | PipelineRun waiting to start |
+| **NoRun** | No PipelineRuns found for this repository |
+
+### Clickable Links
+
+On modern terminals (iTerm2, Windows Terminal, GNOME Terminal, kitty, etc.), the SHA and STATUS columns contain clickable links:
+
+- **SHA link**: Opens commit in Git provider
+- **STATUS link**: Opens PipelineRun logs in console/dashboard
+
+Use Ctrl+Click (Linux/Windows) or Cmd+Click (macOS) to open links.
+
+### Label Selector Examples
+
+<CodeGroup>
+
+```bash Equality
+# Repositories with specific label
+tkn pac list -l app=myapp
+
+# Multiple labels (AND)
+tkn pac list -l app=myapp,environment=production
+```
+
+```bash Inequality
+# Exclude repositories
+tkn pac list -l environment!=development
+
+# Combine with equality
+tkn pac list -l team=backend,tier!=experimental
+```
+
+```bash Complex Selectors
+# Multiple conditions
+tkn pac list -l "app in (api,frontend),environment=production"
+```
+
+</CodeGroup>
+
+### Troubleshooting
+
+**No repositories found:**
+
+```
+Error: no repo found
+```
+
+Solutions:
+- Check you're in the correct namespace: `kubectl config get-contexts`
+- Try listing all namespaces: `tkn pac list -A`
+- Verify repositories exist: `kubectl get repositories`
+
+**Permission denied:**
+
+```
+Error: repositories.pipelinesascode.tekton.dev is forbidden
+```
+
+Solution: Request RBAC permissions to list repositories in the namespace.
+
+---
+
+## delete
+
+Delete one or more Pipelines-as-Code Repository CRDs.
+
+### Synopsis
+
+```bash
+tkn pac delete repository <name> [<name2> ...] [flags]
+tkn pac delete repo <name> [flags]
+```
+
+### Description
+
+The `delete repository` command removes Repository CRDs from your cluster. With the `--cascade` flag, it also deletes associated secrets (webhook and provider tokens).
+
+### Usage Examples
+
+<CodeGroup>
+
+```bash Single Repository
+# Delete one repository
+tkn pac delete repo myorg-app
+```
+
+```bash Multiple Repositories
+# Delete multiple repositories
+tkn pac delete repo myorg-api myorg-frontend myorg-docs
+```
+
+```bash With Secrets
+# Delete repository and its secrets
+tkn pac delete repo myorg-app --cascade
+```
+
+```bash Specific Namespace
+# Delete from specific namespace
+tkn pac delete repo myorg-app -n production
+```
+
+```bash Cascade All Secrets
+# Delete multiple with secrets
+tkn pac delete repo app1 app2 app3 --cascade
+```
+
+</CodeGroup>
+
+### Required Arguments
+
+<ParamField path="name" type="string" required>
+  Repository name(s) to delete (space-separated for multiple)
+</ParamField>
+
+### Flags
+
+<ParamField path="-c, --cascade" type="boolean" default="false">
+  Delete the repository and its attached secrets
+  
+  Deletes:
+  - Git provider token secret (if configured)
+  - Webhook secret (if configured)
+</ParamField>
+
+<ParamField path="-n, --namespace" type="string">
+  Namespace containing the repository
+</ParamField>
+
+### Output Example
+
+**Without cascade:**
+
+```bash
+$ tkn pac delete repo myorg-app
+
+repository myorg-app has been deleted
+```
+
+**With cascade:**
+
+```bash
+$ tkn pac delete repo myorg-app --cascade
+
+secret git-provider-secret has been deleted
+secret webhook-secret has been deleted
+repository myorg-app has been deleted
+```
+
+**Multiple repositories:**
+
+```bash
+$ tkn pac delete repo myorg-api myorg-frontend myorg-docs
+
+repository myorg-api has been deleted
+repository myorg-frontend has been deleted
+repository myorg-docs has been deleted
+```
+
+### Cascade Deletion Details
+
+When using `--cascade`, the command deletes:
+
+1. **Git Provider Secret** - Contains personal access token or API key
+2. **Webhook Secret** - Contains webhook validation secret
+3. **Repository CRD** - The Repository custom resource itself
+
+<Warning>
+  Cascade deletion cannot be undone. Secrets will be permanently deleted.
+</Warning>
+
+### Associated Secrets
+
+Secrets deleted with `--cascade` (if they exist):
+
+```yaml
+spec:
+  git_provider:
+    secret:
+      name: "git-provider-secret"  # Deleted with --cascade
+      key: "token"
+    webhook_secret:
+      name: "webhook-secret"        # Deleted with --cascade
+      key: "webhook-secret"
+```
+
+### Common Workflows
+
+#### Clean Up Test Repositories
+
+```bash
+# Delete all test repos with their secrets
+tkn pac delete repo test-app-1 test-app-2 test-app-3 --cascade
+```
+
+#### Remove Repository but Keep Secrets
+
+```bash
+# Delete only the Repository CRD
+tkn pac delete repo myorg-app
+
+# Secrets remain and can be reused
+tkn pac create repo --url https://github.com/myorg/app-v2
+```
+
+#### Delete from Multiple Namespaces
+
+```bash
+# Development
+tkn pac delete repo myorg-app -n dev --cascade
+
+# Staging
+tkn pac delete repo myorg-app -n staging --cascade
+
+# Production
+tkn pac delete repo myorg-app -n prod --cascade
+```
+
+### Troubleshooting
+
+**Repository not found:**
+
+```
+Error: repositories.pipelinesascode.tekton.dev "myorg-app" not found
+```
+
+Solutions:
+- Check the repository name: `tkn pac list`
+- Verify the namespace: `tkn pac list -A`
+- Ensure correct spelling
+
+**Secret deletion failed:**
+
+```
+skipping deleting api secret git-provider-secret
+repository myorg-app has been deleted
+```
+
+This is not an error - the secret may have been:
+- Already deleted
+- Never created
+- Shared by another repository
+
+**Permission denied:**
+
+```
+Error: repositories.pipelinesascode.tekton.dev "myorg-app" is forbidden
+```
+
+Solution: Request RBAC permissions to delete repositories in the namespace.
+
+**Webhook remains on Git provider:**
+
+Deleting the Repository CRD does not remove webhooks from your Git provider. To clean up:
+
+```bash
+# Manually remove webhook from GitHub/GitLab/Bitbucket settings
+# Or use the API to delete it programmatically
+```
+
+---
+
+## Related Commands
+
+- [`tkn pac create repo`](/cli/create) - Create new repositories
+- [`tkn pac describe`](/cli/describe) - Describe repository details
+- [`tkn pac logs`](/cli/logs) - View PipelineRun logs
+
+## See Also
+
+- [Repository CRD Reference](/docs/guide/repositorycrd)
+- [RBAC Configuration](/docs/install/settings#rbac)

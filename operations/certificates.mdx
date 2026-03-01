@@ -1,0 +1,410 @@
+---
+title: TLS Certificates
+description: Configure Pipelines as Code to work with custom or self-signed TLS certificates
+---
+
+When working with Git providers that use custom or self-signed TLS certificates (such as self-hosted GitLab, GitHub Enterprise, or Bitbucket), you need to configure Pipelines as Code to trust these certificates.
+
+## Overview
+
+Pipelines as Code components make HTTPS connections to:
+- Git provider APIs (GitHub, GitLab, Bitbucket)
+- Git repositories for cloning
+- Webhook endpoints
+- Custom catalog hubs
+
+If any of these endpoints use certificates not signed by a well-known Certificate Authority (CA), you must expose the custom CA certificate to Pipelines as Code.
+
+## OpenShift Configuration
+
+On OpenShift, if Pipelines as Code is installed through the **OpenShift Pipelines Operator**, the process is simplified.
+
+### Add Certificate via Proxy Object
+
+OpenShift allows you to add custom certificates cluster-wide using the Proxy object. The OpenShift Pipelines Operator automatically exposes these certificates to all Pipelines components, including Pipelines as Code.
+
+1. Follow the [OpenShift documentation for configuring custom PKI](https://docs.openshift.com/container-platform/latest/networking/configuring-a-custom-pki.html#nw-proxy-configure-object_configuring-a-custom-pki)
+
+2. The certificate will be automatically mounted in:
+   - `pipelines-as-code-controller`
+   - `pipelines-as-code-watcher`
+   - `pipelines-as-code-webhook`
+   - All PipelineRun pods
+
+<Note>
+  No additional configuration is needed. The operator handles certificate distribution automatically.
+</Note>
+
+## Kubernetes Configuration
+
+On standard Kubernetes clusters, you need to manually configure custom certificates.
+
+### Step 1: Create ConfigMap with Certificate
+
+Create a ConfigMap containing your custom CA certificate:
+
+```bash
+kubectl -n pipelines-as-code create configmap git-repo-cert \
+  --from-file=git.crt=/path/to/ca.crt
+```
+
+**Parameters:**
+- `git-repo-cert` - ConfigMap name (you can use any name)
+- `git.crt` - Key name in ConfigMap (you can use any name)
+- `/path/to/ca.crt` - Path to your CA certificate file
+
+**Example:**
+
+```bash
+# For a self-hosted GitLab instance
+kubectl -n pipelines-as-code create configmap gitlab-ca-cert \
+  --from-file=gitlab.crt=/home/user/certs/gitlab-ca.crt
+```
+
+### Step 2: Mount ConfigMap in Deployments
+
+You need to mount the ConfigMap in both the controller and watcher deployments.
+
+#### Option 1: Edit Deployment YAML
+
+Edit the deployment to add the ConfigMap volume:
+
+```bash
+kubectl edit deployment pipelines-as-code-controller -n pipelines-as-code
+```
+
+Add the volume and volumeMount:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pipelines-as-code-controller
+  namespace: pipelines-as-code
+spec:
+  template:
+    spec:
+      containers:
+        - name: pac-controller
+          # ... other config
+          volumeMounts:
+            - name: git-certs
+              mountPath: /pac-custom-certs
+              readOnly: true
+      volumes:
+        - name: git-certs
+          configMap:
+            name: git-repo-cert
+```
+
+Repeat for the watcher deployment:
+
+```bash
+kubectl edit deployment pipelines-as-code-watcher -n pipelines-as-code
+```
+
+#### Option 2: Use kubectl patch
+
+Patch both deployments using kubectl:
+
+```bash
+# Patch controller
+kubectl patch deployment pipelines-as-code-controller \
+  -n pipelines-as-code \
+  --type=json \
+  -p='[
+    {
+      "op": "add",
+      "path": "/spec/template/spec/volumes/-",
+      "value": {
+        "name": "git-certs",
+        "configMap": {"name": "git-repo-cert"}
+      }
+    },
+    {
+      "op": "add",
+      "path": "/spec/template/spec/containers/0/volumeMounts/-",
+      "value": {
+        "name": "git-certs",
+        "mountPath": "/pac-custom-certs",
+        "readOnly": true
+      }
+    }
+  ]'
+
+# Patch watcher
+kubectl patch deployment pipelines-as-code-watcher \
+  -n pipelines-as-code \
+  --type=json \
+  -p='[
+    {
+      "op": "add",
+      "path": "/spec/template/spec/volumes/-",
+      "value": {
+        "name": "git-certs",
+        "configMap": {"name": "git-repo-cert"}
+      }
+    },
+    {
+      "op": "add",
+      "path": "/spec/template/spec/containers/0/volumeMounts/-",
+      "value": {
+        "name": "git-certs",
+        "mountPath": "/pac-custom-certs",
+        "readOnly": true
+      }
+    }
+  ]'
+```
+
+### Step 3: Configure SSL_CERT_DIR
+
+After mounting the certificates, configure the `SSL_CERT_DIR` environment variable to include your custom certificate directory.
+
+The `SSL_CERT_DIR` environment variable tells Go applications where to look for CA certificates. You must include:
+- Your custom certificate path (`/pac-custom-certs`)
+- Standard system certificate paths
+
+```bash
+kubectl set env deployment pipelines-as-code-controller \
+  pipelines-as-code-watcher \
+  -n pipelines-as-code \
+  SSL_CERT_DIR=/pac-custom-certs:/etc/ssl/certs:/etc/pki/tls/certs:/system/etc/security/cacerts
+```
+
+**Certificate search paths:**
+- `/pac-custom-certs` - Your custom certificates
+- `/etc/ssl/certs` - Debian/Ubuntu system certificates
+- `/etc/pki/tls/certs` - RHEL/CentOS system certificates
+- `/system/etc/security/cacerts` - Android system certificates
+
+<Warning>
+  Always include standard system certificate paths in `SSL_CERT_DIR`. Omitting them will break connections to public services (like artifacthub.io, GitHub.com, etc.).
+</Warning>
+
+### Step 4: Verify Configuration
+
+Verify the deployments have been updated:
+
+```bash
+# Check controller deployment
+kubectl get deployment pipelines-as-code-controller -n pipelines-as-code -o yaml | grep SSL_CERT_DIR
+
+# Check watcher deployment
+kubectl get deployment pipelines-as-code-watcher -n pipelines-as-code -o yaml | grep SSL_CERT_DIR
+
+# Verify pods restarted
+kubectl get pods -n pipelines-as-code
+```
+
+Check logs for certificate-related errors:
+
+```bash
+kubectl logs -n pipelines-as-code deployment/pipelines-as-code-controller | grep -i cert
+kubectl logs -n pipelines-as-code deployment/pipelines-as-code-watcher | grep -i cert
+```
+
+## Multiple Certificates
+
+If you need to trust multiple custom certificates:
+
+### Option 1: Multiple Files in One ConfigMap
+
+```bash
+kubectl -n pipelines-as-code create configmap git-repo-certs \
+  --from-file=gitlab.crt=/path/to/gitlab-ca.crt \
+  --from-file=github.crt=/path/to/github-ca.crt \
+  --from-file=bitbucket.crt=/path/to/bitbucket-ca.crt
+```
+
+All certificate files will be mounted in the same directory.
+
+### Option 2: Bundle Certificates
+
+Combine multiple certificates into a single file:
+
+```bash
+cat gitlab-ca.crt github-enterprise-ca.crt > combined-ca.crt
+
+kubectl -n pipelines-as-code create configmap git-repo-cert \
+  --from-file=git.crt=combined-ca.crt
+```
+
+## PipelineRun Pods
+
+Custom certificates mounted in controller and watcher deployments only affect Pipelines as Code components. To use custom certificates in **PipelineRun pods** (for git-clone tasks, etc.), you need additional configuration.
+
+### Option 1: ConfigMap in PipelineRun Namespace
+
+Create the same ConfigMap in each namespace where PipelineRuns execute:
+
+```bash
+kubectl -n my-repo-namespace create configmap git-repo-cert \
+  --from-file=git.crt=/path/to/ca.crt
+```
+
+Then mount it in your git-clone task:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: my-pipeline
+spec:
+  pipelineSpec:
+    tasks:
+      - name: git-clone
+        taskRef:
+          name: git-clone
+        params:
+          - name: url
+            value: https://gitlab.company.com/repo.git
+        workspaces:
+          - name: ssl-ca-directory
+            configMap:
+              name: git-repo-cert
+```
+
+### Option 2: Cluster-wide Certificate Distribution
+
+For cluster-wide certificate distribution, consider:
+
+1. **OpenShift Proxy object** (OpenShift only)
+2. **Tekton Pipelines ConfigMap** - Configure `ssl-cert-dir` in `config-defaults`
+3. **Custom init container** - Copy certificates to shared workspace in each PipelineRun
+
+## Troubleshooting
+
+### Certificate Verification Errors
+
+If you see errors like:
+
+```
+x509: certificate signed by unknown authority
+```
+
+This indicates the certificate is not trusted. Verify:
+
+1. **ConfigMap exists and contains certificate:**
+
+```bash
+kubectl get configmap git-repo-cert -n pipelines-as-code
+kubectl describe configmap git-repo-cert -n pipelines-as-code
+```
+
+2. **ConfigMap is mounted in pods:**
+
+```bash
+kubectl describe pod <controller-pod> -n pipelines-as-code | grep -A5 Mounts
+```
+
+3. **SSL_CERT_DIR is set:**
+
+```bash
+kubectl exec -n pipelines-as-code deployment/pipelines-as-code-controller -- env | grep SSL_CERT_DIR
+```
+
+4. **Certificate file is readable:**
+
+```bash
+kubectl exec -n pipelines-as-code deployment/pipelines-as-code-controller -- ls -l /pac-custom-certs/
+kubectl exec -n pipelines-as-code deployment/pipelines-as-code-controller -- cat /pac-custom-certs/git.crt
+```
+
+### Wrong Certificate Format
+
+Certificates must be in PEM format:
+
+```
+-----BEGIN CERTIFICATE-----
+MIID...
+-----END CERTIFICATE-----
+```
+
+If your certificate is in DER format, convert it:
+
+```bash
+openssl x509 -inform DER -in cert.der -out cert.pem
+```
+
+### Certificate Expired
+
+Check certificate validity:
+
+```bash
+openssl x509 -in /path/to/ca.crt -noout -dates
+```
+
+### Testing Certificate Trust
+
+Test from inside a pod:
+
+```bash
+# Test HTTPS connection
+kubectl exec -n pipelines-as-code deployment/pipelines-as-code-controller -- \
+  curl -v https://gitlab.company.com
+
+# Check certificate chain
+kubectl exec -n pipelines-as-code deployment/pipelines-as-code-controller -- \
+  openssl s_client -connect gitlab.company.com:443 -CApath /pac-custom-certs
+```
+
+## Best Practices
+
+<Note>
+  **Certificate Management:**
+  - Use descriptive ConfigMap names (e.g., `gitlab-ca-cert`, not `cert`)
+  - Document certificate source and expiration in ConfigMap annotations
+  - Set up monitoring for certificate expiration
+  - Automate certificate rotation when possible
+  - Use the same ConfigMap name across all namespaces for consistency
+</Note>
+
+<Warning>
+  Always verify certificates are from trusted sources. Using certificates from untrusted sources can expose your cluster to man-in-the-middle attacks.
+</Warning>
+
+## Example: Complete Setup for GitLab
+
+Complete example for self-hosted GitLab with custom certificate:
+
+```bash
+# 1. Create ConfigMap with GitLab CA certificate
+kubectl -n pipelines-as-code create configmap gitlab-ca \
+  --from-file=gitlab.crt=/etc/ssl/certs/gitlab-ca.crt
+
+# 2. Patch controller deployment
+kubectl patch deployment pipelines-as-code-controller -n pipelines-as-code \
+  --type=json -p='[
+    {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gitlab-certs","configMap":{"name":"gitlab-ca"}}},
+    {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gitlab-certs","mountPath":"/pac-certs","readOnly":true}}
+  ]'
+
+# 3. Patch watcher deployment
+kubectl patch deployment pipelines-as-code-watcher -n pipelines-as-code \
+  --type=json -p='[
+    {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"gitlab-certs","configMap":{"name":"gitlab-ca"}}},
+    {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"gitlab-certs","mountPath":"/pac-certs","readOnly":true}}
+  ]'
+
+# 4. Set SSL_CERT_DIR
+kubectl set env deployment/pipelines-as-code-controller \
+  deployment/pipelines-as-code-watcher \
+  -n pipelines-as-code \
+  SSL_CERT_DIR=/pac-certs:/etc/ssl/certs:/etc/pki/tls/certs
+
+# 5. Verify
+kubectl rollout status deployment/pipelines-as-code-controller -n pipelines-as-code
+kubectl rollout status deployment/pipelines-as-code-watcher -n pipelines-as-code
+
+# 6. Test connection
+kubectl exec -n pipelines-as-code deployment/pipelines-as-code-controller -- \
+  curl -v https://gitlab.company.com/api/v4/version
+```
+
+## See Also
+
+- [Configuration](/operations/configuration) - Main ConfigMap settings
+- [Logging](/operations/logging) - Debug certificate issues with logging
+- [OpenShift Custom PKI](https://docs.openshift.com/container-platform/latest/networking/configuring-a-custom-pki.html) - OpenShift certificate configuration
+- [Kubernetes ConfigMaps](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/) - ConfigMap documentation

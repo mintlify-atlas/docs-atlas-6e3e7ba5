@@ -1,0 +1,290 @@
+---
+title: Configuration
+description: Configure Pipelines as Code using ConfigMap settings
+---
+
+Pipelines as Code is configured through the `pipelines-as-code` ConfigMap in the `pipelines-as-code` namespace. This ConfigMap controls various aspects of the controller behavior, from authentication to error detection.
+
+## Viewing the Configuration
+
+To view the current configuration:
+
+```bash
+kubectl get configmap pipelines-as-code -n pipelines-as-code -o yaml
+```
+
+## Configuration Reference
+
+All configuration options are defined in the `data` section of the ConfigMap. Below is the complete reference for all available settings.
+
+### Application Settings
+
+<ParamField path="application-name" type="string" default="Pipelines as Code CI">
+  The name of the application shown in PipelineRun results. If using GitHub App, you must also update this label in the GitHub App settings.
+</ParamField>
+
+### Authentication & Security
+
+<ParamField path="secret-auto-create" type="boolean" default="true">
+  Automatically create a secret with the token generated through the GitHub application for use with private repositories.
+</ParamField>
+
+<ParamField path="secret-github-app-token-scoped" type="boolean" default="true">
+  Scope GitHub App installation tokens to only the repository where the event originated, rather than all repositories the app has access to.
+  
+  This is recommended when the GitHub App is installed on an organization with a mix of public and private repositories where not all users should have access to private repositories.
+</ParamField>
+
+<Warning>
+  Setting `secret-github-app-token-scoped` to `false` allows access to all repositories where the GitHub App is installed. Only disable this if you trust all users in your organization.
+</Warning>
+
+<ParamField path="secret-github-app-scope-extra-repos" type="string" default="">
+  Add additional repositories to the token scope without completely disabling token scoping. Repositories must be part of the same GitHub App installation.
+  
+  Example:
+  ```yaml
+  secret-github-app-scope-extra-repos: "owner/private-repo1, org/repo2"
+  ```
+</ParamField>
+
+### Remote Tasks & Catalogs
+
+<ParamField path="remote-tasks" type="boolean" default="true">
+  Allow fetching remote tasks using PipelineRun annotations.
+</ParamField>
+
+<ParamField path="hub-url" type="string" default="https://artifacthub.io">
+  The base URL for the hub API used to fetch tasks and pipelines.
+</ParamField>
+
+<ParamField path="hub-catalog-type" type="string" default="artifacthub">
+  The type of hub catalog. Supported values:
+  - `artifacthub` - For Artifact Hub (default)
+  - `tektonhub` - For custom self-hosted Tekton Hub instances
+</ParamField>
+
+#### Additional Catalogs
+
+You can configure multiple custom catalogs using numbered prefixes:
+
+```yaml
+catalog-1-id: custom
+catalog-1-name: tekton
+catalog-1-url: https://api.custom.hub/v1
+catalog-1-type: tektonhub
+
+catalog-2-id: artifact
+catalog-2-name: tekton-catalog-tasks
+catalog-2-url: https://artifacthub.io
+catalog-2-type: artifacthub
+```
+
+Users can reference custom catalogs in their PipelineRun annotations:
+
+```yaml
+pipelinesascode.tekton.dev/task: "custom://task-name"
+```
+
+### Error Detection & Reporting
+
+<ParamField path="error-log-snippet" type="boolean" default="true">
+  Show a log snippet of the failed task when a PipelineRun fails. Disable this if your pipelines may leak sensitive values in logs.
+</ParamField>
+
+<ParamField path="error-log-snippet-number-of-lines" type="integer" default="3">
+  Number of lines to display in error log snippets. GitHub Check interface has a 65,535 character limit, so use conservative values.
+</ParamField>
+
+<ParamField path="error-detection-from-container-logs" type="boolean" default="true">
+  Inspect container logs to detect error messages and expose them as annotations on Pull Requests. Only supported with GitHub Apps.
+</ParamField>
+
+<ParamField path="error-detection-max-number-of-lines" type="integer" default="50">
+  Maximum number of lines to inspect from container logs for error detection. Use `-1` for unlimited lines. Increasing this value may increase watcher memory usage.
+</ParamField>
+
+<ParamField path="error-detection-simple-regexp" type="string">
+  Regular expression used for simple error detection. The regexp must include named groups: `filename`, `line`, `column`, and `error`.
+  
+  Default pattern matches errors like: `test.js:100:10: an error occurred`
+  
+  ```regex
+  ^(?P<filename>[^:]*):(?P<line>[0-9]+):(?P<column>[0-9]+)?([ ]*)?(?P<error>.*)
+  ```
+</ParamField>
+
+### Pipeline Run Management
+
+<ParamField path="enable-cancel-in-progress-on-pull-requests" type="boolean" default="false">
+  Automatically cancel in-progress PipelineRuns when a pull request is updated. Helps conserve resources by preventing outdated runs.
+</ParamField>
+
+<ParamField path="enable-cancel-in-progress-on-push" type="boolean" default="false">
+  Automatically cancel in-progress PipelineRuns when a new push occurs on the same branch.
+</ParamField>
+
+<Note>
+  Individual PipelineRuns can override global cancel-in-progress settings using the `pipelinesascode.tekton.dev/on-cancel-in-progress` annotation.
+</Note>
+
+<ParamField path="max-keep-run-upper-limit" type="integer" default="">
+  Maximum value allowed for the `pipelinesascode.tekton.dev/max-keep-runs` annotation. When users set this annotation, the value must be less than or equal to this limit.
+</ParamField>
+
+<ParamField path="default-max-keep-runs" type="integer" default="">
+  Default number of PipelineRuns to keep. Applied to all PipelineRuns without a `max-keep-runs` annotation.
+</ParamField>
+
+<ParamField path="skip-push-event-for-pr-commits" type="boolean" default="true">
+  Prevent duplicate PipelineRuns when a commit appears in both a push event and a pull request. If a pushed commit is part of an open PR, the push event is skipped.
+  
+  **Note:** This does not apply to git tag push events, which always trigger pipeline runs.
+</ParamField>
+
+### Auto-Configuration
+
+<ParamField path="auto-configure-new-github-repo" type="boolean" default="false">
+  Automatically configure newly created GitHub repositories by creating a namespace and Repository CR. Only supported with GitHub App.
+</ParamField>
+
+<Warning>
+  Verify that the `repository` event is subscribed in your GitHub App settings before enabling auto-configuration.
+</Warning>
+
+<ParamField path="auto-configure-repo-namespace-template" type="string" default="{{repo_name}}-pipelines">
+  Template for generating namespace names for auto-configured repositories.
+  
+  Available variables:
+  - `{{repo_owner}}` - The repository owner
+  - `{{repo_name}}` - The repository name
+  
+  Example: `{{repo_owner}}-{{repo_name}}-ci` creates `owner-repo-ci` for `https://github.com/owner/repo`
+</ParamField>
+
+<ParamField path="auto-configure-repo-repository-template" type="string" default="{{repo_name}}-repo-cr">
+  Template for generating Repository CR names for auto-configured repositories.
+  
+  Available variables:
+  - `{{repo_owner}}` - The repository owner
+  - `{{repo_name}}` - The repository name
+</ParamField>
+
+### Security Settings
+
+<ParamField path="remember-ok-to-test" type="boolean" default="false">
+  When enabled, CI automatically re-runs on pull request updates after initial `/ok-to-test` approval.
+</ParamField>
+
+<Warning>
+  Enabling `remember-ok-to-test` creates security risks. An attacker could submit a harmless PR to gain trust, then inject malicious code in a later commit to exfiltrate secrets. Only enable if absolutely necessary.
+</Warning>
+
+<ParamField path="require-ok-to-test-sha" type="boolean" default="false">
+  Require `/ok-to-test` comments to include the specific commit SHA. Prevents race conditions where malicious code is pushed after approval but before CI runs.
+  
+  Example: `/ok-to-test sha=abc123def456`
+</ParamField>
+
+### Bitbucket Cloud Settings
+
+<ParamField path="bitbucket-cloud-check-source-ip" type="boolean" default="true">
+  Verify webhook requests from Bitbucket Cloud by checking against Atlassian IP ranges. Only applies to public Bitbucket (when `provider.url` is not set in Repository spec).
+</ParamField>
+
+<Warning>
+  Disabling `bitbucket-cloud-check-source-ip` is a security risk. Malicious users could send fake webhook payloads to trigger unauthorized PipelineRuns.
+</Warning>
+
+<ParamField path="bitbucket-cloud-additional-source-ip" type="string" default="">
+  Additional IPs or networks to allow for Bitbucket Cloud webhooks. Supports specific IPs (`127.0.0.1`) or networks (`127.0.0.0/16`). Separate multiple values with commas.
+</ParamField>
+
+### Dashboard Integration
+
+<ParamField path="tekton-dashboard-url" type="string" default="">
+  URL of the Tekton Dashboard. When set, Pipelines as Code generates links to PipelineRun status and task logs in the dashboard.
+</ParamField>
+
+#### Custom Console Configuration
+
+<ParamField path="custom-console-name" type="string" default="">
+  Name of your custom console (e.g., "MyCorp Console")
+</ParamField>
+
+<ParamField path="custom-console-url" type="string" default="">
+  Root URL of your custom console (e.g., "https://mycorp.com")
+</ParamField>
+
+<ParamField path="custom-console-url-pr-details" type="string" default="">
+  URL template for viewing PipelineRun details. Supports template variables:
+  - `{{namespace}}` - Target namespace
+  - `{{pr}}` - PipelineRun name
+  - Any custom parameters from Repository CR
+  
+  Example: `https://mycorp.com/ns/{{namespace}}/pipelinerun/{{pr}}`
+</ParamField>
+
+<ParamField path="custom-console-url-pr-tasklog" type="string" default="">
+  URL template for viewing task logs. Supports template variables:
+  - `{{namespace}}` - Target namespace
+  - `{{pr}}` - PipelineRun name
+  - `{{task}}` - Task name
+  - `{{pod}}` - Pod name
+  - `{{firstFailedStep}}` - First failed step name
+  
+  Example: `https://mycorp.com/ns/{{namespace}}/pr/{{pr}}/logs/{{task}}#{{pod}}-{{firstFailedStep}}`
+</ParamField>
+
+## Example ConfigMap
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+data:
+  application-name: "Pipelines as Code CI"
+  secret-auto-create: "true"
+  secret-github-app-token-scoped: "true"
+  remote-tasks: "true"
+  hub-url: "https://artifacthub.io"
+  hub-catalog-type: "artifacthub"
+  error-log-snippet: "true"
+  error-log-snippet-number-of-lines: "3"
+  error-detection-from-container-logs: "true"
+  error-detection-max-number-of-lines: "50"
+  enable-cancel-in-progress-on-pull-requests: "false"
+  enable-cancel-in-progress-on-push: "false"
+  bitbucket-cloud-check-source-ip: "true"
+  auto-configure-new-github-repo: "false"
+  remember-ok-to-test: "false"
+  skip-push-event-for-pr-commits: "true"
+```
+
+## Applying Configuration Changes
+
+To update configuration:
+
+```bash
+kubectl edit configmap pipelines-as-code -n pipelines-as-code
+```
+
+Or apply changes from a file:
+
+```bash
+kubectl apply -f pipelines-as-code-config.yaml
+```
+
+Most configuration changes take effect immediately. Some settings may require controller restart:
+
+```bash
+kubectl rollout restart deployment/pipelines-as-code-controller -n pipelines-as-code
+```
+
+## See Also
+
+- [Global Repository Settings](/operations/global-repository-settings) - Configure default settings for all repositories
+- [Logging Configuration](/operations/logging) - Configure log levels and debugging
+- [Metrics](/operations/metrics) - Monitor Pipelines as Code with Prometheus

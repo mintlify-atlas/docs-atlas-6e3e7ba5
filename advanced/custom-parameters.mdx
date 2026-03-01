@@ -1,0 +1,443 @@
+---
+title: Custom Parameters
+description: Define and use custom parameters and template variables in your PipelineRuns
+---
+
+## Overview
+
+Pipelines-as-Code allows you to define custom parameters at the repository level that can be expanded in your PipelineRun definitions using the `{{ param }}` syntax. This provides a flexible way to inject configuration values, secrets, and dynamic data into your pipelines.
+
+<Note>
+Custom parameters should be used for configuration that cannot be handled by Tekton's native PipelineRun parameters. Use Tekton params when possible for better integration with the Tekton ecosystem.
+</Note>
+
+## Basic Usage
+
+### Defining Parameters
+
+Parameters are defined in the Repository CR's `spec.params` section:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+  namespace: my-namespace
+spec:
+  url: "https://github.com/owner/repo"
+  params:
+    - name: company
+      value: "My Beautiful Company"
+    - name: registry_url
+      value: "quay.io/myorg"
+```
+
+### Using Parameters in PipelineRuns
+
+Reference parameters in your PipelineRun using double curly braces:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: build-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+spec:
+  params:
+    - name: image-name
+      value: "{{ registry_url }}/my-app:{{ revision }}"
+  pipelineSpec:
+    tasks:
+      - name: info
+        taskSpec:
+          steps:
+            - name: print-company
+              image: alpine
+              script: |
+                echo "Building for {{ company }}"
+```
+
+## Parameter Configuration Options
+
+<ParamField path="params[].name" type="string" required>
+  The parameter name. This key is used to reference the parameter in PipelineRun definitions via `{{ name }}` syntax.
+</ParamField>
+
+<ParamField path="params[].value" type="string">
+  The literal value of the parameter. This field is mutually exclusive with `secret_ref`.
+</ParamField>
+
+<ParamField path="params[].secret_ref" type="object">
+  Reference to a Kubernetes Secret containing the parameter value. Use this for sensitive data. Mutually exclusive with `value`.
+  
+  <ParamField path="params[].secret_ref.name" type="string" required>
+    Name of the Kubernetes Secret.
+  </ParamField>
+  
+  <ParamField path="params[].secret_ref.key" type="string">
+    Key within the Secret. Defaults to the parameter name if not specified.
+  </ParamField>
+</ParamField>
+
+<ParamField path="params[].filter" type="string">
+  CEL expression that determines when this parameter applies. Allows conditional parameter expansion based on event attributes.
+</ParamField>
+
+## Using Secret References
+
+For sensitive data like API keys or tokens, store values in Kubernetes Secrets:
+
+```yaml
+# Create a secret first
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-secrets
+  namespace: my-namespace
+type: Opaque
+stringData:
+  api-key: "super-secret-api-key"
+  company-name: "Acme Corporation"
+```
+
+```yaml
+# Reference it in the Repository CR
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+spec:
+  url: "https://github.com/owner/repo"
+  params:
+    - name: api_key
+      secret_ref:
+        name: my-secrets
+        key: api-key
+    - name: company
+      secret_ref:
+        name: my-secrets
+        key: company-name
+```
+
+<Warning>
+If both `value` and `secret_ref` are defined for a parameter, `value` takes precedence.
+</Warning>
+
+## Conditional Parameters with CEL Filters
+
+Use CEL expressions to apply parameters conditionally based on event attributes:
+
+```yaml
+spec:
+  params:
+    # Apply only on pull requests
+    - name: environment
+      value: "staging"
+      filter: pac.event_type == "pull_request"
+    
+    # Apply only on pushes to main
+    - name: environment
+      value: "production"
+      filter: pac.event_type == "push" && pac.target_branch == "main"
+    
+    # Apply based on webhook payload
+    - name: deploy_enabled
+      value: "true"
+      filter: body.action == "opened" && pac.event_type == "pull_request"
+```
+
+### Available CEL Variables
+
+<Accordion title="PAC Variables (pac.*)">
+  All default Pipelines-as-Code template variables are available with the `pac` prefix:
+  - `pac.event_type` - Event type (push, pull_request, incoming)
+  - `pac.target_branch` - Target branch name
+  - `pac.source_branch` - Source branch name (for PRs)
+  - `pac.repo_owner` - Repository owner
+  - `pac.repo_name` - Repository name
+  - `pac.revision` - Git revision/SHA
+  
+  See the [Authoring PipelineRuns](/docs/guide/authoringprs#default-parameters) documentation for the complete list.
+</Accordion>
+
+<Accordion title="Webhook Payload (body.*)">
+  The complete webhook payload from your Git provider is available under the `body` prefix:
+  
+  **GitHub Example:**
+  ```json
+  {
+    "action": "opened",
+    "number": 79,
+    "pull_request": {
+      "state": "open",
+      "title": "Update README"
+    }
+  }
+  ```
+  
+  Access with: `body.action`, `body.number`, `body.pull_request.title`
+  
+  **GitLab Example:**
+  ```json
+  {
+    "object_kind": "merge_request",
+    "event_type": "merge_request",
+    "user": {
+      "username": "john_doe"
+    }
+  }
+  ```
+  
+  Access with: `body.object_kind`, `body.user.username`
+  
+  Refer to your Git provider's webhook documentation for payload structure:
+  - [GitHub Webhook Events](https://docs.github.com/webhooks-and-events/webhooks/webhook-events-and-payloads)
+  - [GitLab Webhook Events](https://docs.gitlab.com/ee/user/project/integrations/webhook_events.html)
+</Accordion>
+
+### Multiple Parameters with Different Filters
+
+When multiple parameters share the same name with different filters, the **first matching filter** is used:
+
+```yaml
+spec:
+  params:
+    # Checked first - most specific
+    - name: image_tag
+      value: "prod-{{ revision }}"
+      filter: pac.target_branch == "main" && pac.event_type == "push"
+    
+    # Checked second
+    - name: image_tag
+      value: "dev-{{ revision }}"
+      filter: pac.event_type == "pull_request"
+    
+    # Checked last - fallback
+    - name: image_tag
+      value: "test-{{ revision }}"
+```
+
+<Note>
+Order your parameters from most specific to least specific when using filters with the same parameter name.
+</Note>
+
+## Parameters Without Default Values
+
+You can define parameters without a default value to require them to be passed via [GitOps commands](/docs/guide/gitops_commands):
+
+```yaml
+spec:
+  params:
+    - name: start_time
+    - name: custom_flag
+```
+
+These parameters are only expanded when a value is supplied via a GitOps command comment:
+
+```
+/retest start_time="2024-03-01T10:00:00Z" custom_flag="enabled"
+```
+
+<Warning>
+If a parameter without a default value is not provided via GitOps command, it will appear as `{{ param }}` (unexpanded) in the PipelineRun.
+</Warning>
+
+## Using Parameters in CEL Expressions
+
+Custom parameters are also available as CEL variables in the `on-cel-expression` annotation:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+spec:
+  url: "https://github.com/owner/repo"
+  params:
+    - name: enable_ci
+      value: "true"
+    - name: environment
+      value: "staging"
+```
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: conditional-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/on-cel-expression: |
+      event == "push" && enable_ci == "true" && environment == "staging"
+spec:
+  # ... pipeline specification
+```
+
+This is useful for:
+- **Feature flags**: Enable/disable pipelines without modifying PipelineRun files
+- **Environment-specific matching**: Run different pipelines based on configuration
+- **Conditional CI**: Control pipeline execution using repository-level settings
+
+Parameters from secrets are also available in CEL expressions:
+
+```yaml
+spec:
+  params:
+    - name: api_key
+      secret_ref:
+        name: my-secret
+        key: key
+```
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "push" && api_key != ""
+```
+
+## Parameter Resolution Rules
+
+<Accordion title="Priority and Precedence">
+  1. If both `value` and `secret_ref` are defined, `value` is used
+  2. If no `value` or `secret_ref` exists, parameter must come from GitOps command
+  3. If no `name` is defined, the parameter is ignored
+  4. If multiple params have the same `name`, the last one in the list is used (unless filters are specified)
+  5. With filters, the first matching parameter is used
+</Accordion>
+
+<Accordion title="Parameter Not Expanded">
+  A parameter will remain as `{{ param }}` in the PipelineRun when:
+  - No `value` or `secret_ref` is provided
+  - No value is supplied via GitOps command
+  - The parameter name is misspelled
+  - The Secret referenced in `secret_ref` doesn't exist or the key is wrong
+</Accordion>
+
+## Best Practices
+
+1. **Use Tekton Params First**: Only use custom parameters when Tekton's native parameter system is insufficient
+
+2. **Secure Sensitive Data**: Always use `secret_ref` for sensitive values like API keys, tokens, and passwords
+
+3. **Order Filters Carefully**: Place more specific filters before generic ones when using multiple parameters with the same name
+
+4. **Document Parameters**: Add comments in your Repository CR explaining what each parameter is used for
+
+5. **Validate in Pipelines**: Add validation steps in your pipelines to check that required parameters are present and valid
+
+6. **Avoid Hardcoding**: Use parameters for values that differ between environments or repositories
+
+## Examples
+
+<Accordion title="Multi-Environment Configuration">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-app
+spec:
+  url: "https://github.com/myorg/my-app"
+  params:
+    # Production settings (checked first)
+    - name: registry
+      value: "registry.prod.example.com"
+      filter: pac.target_branch == "main"
+    - name: namespace
+      value: "production"
+      filter: pac.target_branch == "main"
+    
+    # Staging settings
+    - name: registry
+      value: "registry.staging.example.com"
+      filter: pac.target_branch == "develop"
+    - name: namespace
+      value: "staging"
+      filter: pac.target_branch == "develop"
+    
+    # Development defaults
+    - name: registry
+      value: "registry.dev.example.com"
+    - name: namespace
+      value: "development"
+```
+</Accordion>
+
+<Accordion title="Secret Management">
+```yaml
+# Secrets
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pipeline-secrets
+type: Opaque
+stringData:
+  docker-token: "dckr_pat_xxx"
+  npm-token: "npm_xxx"
+  sonarqube-token: "squ_xxx"
+---
+# Repository CR
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-app
+spec:
+  url: "https://github.com/myorg/my-app"
+  params:
+    - name: docker_token
+      secret_ref:
+        name: pipeline-secrets
+        key: docker-token
+    - name: npm_token
+      secret_ref:
+        name: pipeline-secrets
+        key: npm-token
+    - name: sonar_token
+      secret_ref:
+        name: pipeline-secrets
+        key: sonarqube-token
+```
+</Accordion>
+
+<Accordion title="Dynamic Image Tags">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-service
+spec:
+  url: "https://github.com/myorg/service"
+  params:
+    - name: base_image
+      value: "registry.access.redhat.com/ubi9/ubi-minimal:latest"
+    - name: image_prefix
+      value: "myorg"
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: build
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+spec:
+  params:
+    - name: image-url
+      value: "{{ image_prefix }}/{{ repo_name }}:{{ revision }}"
+  pipelineSpec:
+    params:
+      - name: image-url
+    tasks:
+      - name: build
+        params:
+          - name: IMAGE
+            value: $(params.image-url)
+        taskRef:
+          name: buildah
+```
+</Accordion>
+
+## See Also
+
+- [Authoring PipelineRuns](/docs/guide/authoringprs) - Default parameters and template variables
+- [GitOps Commands](/docs/guide/gitops_commands) - Passing parameters via comments
+- [Advanced Event Matching](/docs/guide/matchingevents) - Using CEL expressions
+- [Repository CRD](/docs/guide/repositorycrd) - Complete Repository configuration reference

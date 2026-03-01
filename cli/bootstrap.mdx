@@ -1,0 +1,349 @@
+---
+title: tkn pac bootstrap
+description: Bootstrap Pipelines-as-Code installation and GitHub App configuration
+---
+
+# tkn pac bootstrap
+
+Bootstrap Pipelines-as-Code installation and GitHub App configuration on your Kubernetes cluster.
+
+## Synopsis
+
+```bash
+tkn pac bootstrap [flags]
+tkn pac bootstrap github-app [flags]
+```
+
+## Description
+
+The `bootstrap` command helps you get started by:
+1. Checking if Pipelines-as-Code is installed
+2. Installing or upgrading PAC if needed
+3. Detecting OpenShift Routes or Kubernetes Ingress
+4. Creating a GitHub App for authentication
+5. Configuring webhook forwarding (if needed)
+
+## Subcommands
+
+### tkn pac bootstrap
+
+Full bootstrap process including installation and GitHub App creation.
+
+### tkn pac bootstrap github-app
+
+Create only the GitHub App, skipping the installation step. Useful when PAC is already installed.
+
+## Supported Providers
+
+- **GitHub** (public github.com)
+- **GitHub Enterprise** (self-hosted GitHub)
+
+## Installation Detection
+
+The command automatically:
+- Checks for existing Pipelines-as-Code installation
+- Detects the installation namespace (`pipelines-as-code` or `openshift-pipelines`)
+- Offers to install the latest stable or nightly release if not found
+
+## Route/Ingress Detection
+
+**OpenShift:**
+- Automatically detects OpenShift Routes
+- Uses the Route URL as the webhook endpoint
+
+**Kubernetes:**
+- Attempts to detect Tekton Dashboard Ingress
+- Prompts to use detected URL or enter custom URL
+
+## Webhook Forwarding (gosmee)
+
+For clusters not accessible from the internet, bootstrap can install [gosmee](https://github.com/chmouel/gosmee), a webhook forwarder:
+
+- Creates a public URL at `https://hook.pipelinesascode.com`
+- Forwards webhooks to your cluster
+- Automatically configured in GitHub App
+
+<Warning>
+  gosmee is for **testing only**. Do not use in production environments.
+</Warning>
+
+## Usage Examples
+
+<CodeGroup>
+
+```bash Basic Bootstrap
+# Interactive bootstrap
+tkn pac bootstrap
+```
+
+```bash GitHub Enterprise
+# Bootstrap with GitHub Enterprise
+tkn pac bootstrap --github-hostname github.company.com
+```
+
+```bash Force gosmee
+# Use gosmee even on OpenShift
+tkn pac bootstrap --force-gosmee
+```
+
+```bash Skip Installation
+# Only create GitHub App
+tkn pac bootstrap --skip-install
+```
+
+```bash Nightly Build
+# Install nightly/development version
+tkn pac bootstrap --nightly
+```
+
+```bash Custom Route
+# Specify custom route URL
+tkn pac bootstrap --route-url https://pac.example.com
+```
+
+```bash GitHub App Only
+# Create GitHub App without full bootstrap
+tkn pac bootstrap github-app
+```
+
+```bash Reconfigure GitHub App
+# Override existing GitHub App
+tkn pac bootstrap --force-configure
+```
+
+</CodeGroup>
+
+## Flags
+
+### Installation Flags
+
+<ParamField path="--skip-install" type="boolean" default="false">
+  Skip Pipelines-as-Code installation
+</ParamField>
+
+<ParamField path="--force-install" type="boolean" default="false">
+  Force PAC installation even if already installed
+</ParamField>
+
+<ParamField path="--nightly" type="boolean" default="false">
+  Install the nightly/development build instead of stable release
+</ParamField>
+
+### GitHub App Flags
+
+<ParamField path="--skip-github-app" type="boolean" default="false">
+  Skip creating GitHub application
+</ParamField>
+
+<ParamField path="--force-configure" type="boolean" default="false">
+  Override existing GitHub App configuration
+</ParamField>
+
+<ParamField path="--github-hostname" type="string">
+  GitHub Enterprise hostname or API URL (e.g., `github.company.com`)
+</ParamField>
+
+<ParamField path="--github-api-url" type="string">
+  **Deprecated:** Use `--github-hostname` instead
+</ParamField>
+
+<ParamField path="--github-application-name" type="string">
+  Custom name for the GitHub Application
+</ParamField>
+
+<ParamField path="--github-application-url" type="string">
+  Homepage URL for the GitHub Application
+</ParamField>
+
+<ParamField path="--github-organization-name" type="string">
+  Target a GitHub organization instead of user account
+</ParamField>
+
+### Network Flags
+
+<ParamField path="--route-url" type="string">
+  Public URL for the PAC controller (overrides auto-detection)
+</ParamField>
+
+<ParamField path="--force-gosmee" type="boolean" default="false">
+  Force gosmee installation even on OpenShift
+</ParamField>
+
+<ParamField path="--web-forwarder-url" type="string" default="https://hook.pipelinesascode.com">
+  gosmee forwarder URL
+</ParamField>
+
+<ParamField path="--dashboard-url" type="string">
+  Full URL to Tekton Dashboard
+</ParamField>
+
+<ParamField path="--webserver-port" type="int" default="8080">
+  Local webserver port for GitHub App creation flow
+</ParamField>
+
+### General Flags
+
+<ParamField path="-C, --no-color" type="boolean">
+  Disable colored output
+</ParamField>
+
+## Interactive Flow
+
+When running `tkn pac bootstrap` interactively, you'll be prompted for:
+
+1. **Installation confirmation** (if PAC not found)
+2. **GitHub Enterprise setup** (if applicable)
+3. **Route/Ingress URL** (if not auto-detected)
+4. **gosmee installation** (if cluster not internet-accessible)
+5. **GitHub App details** (name, organization)
+
+## Output Example
+
+```bash
+$ tkn pac bootstrap
+=> Checking if Pipelines-as-Code is installed.
+✓ Pipelines as Code is already installed.
+=> Detecting OpenShift Route...
+✓ Route detected: https://pipelines-as-code-controller-pipelines-as-code.apps.cluster.example.com
+
+=> Creating GitHub Application
+🌍 Starting web server on http://localhost:8080
+📝 Opening browser to create GitHub App...
+
+✓ GitHub App created successfully!
+  App ID: 123456
+  App Name: my-pac-app
+
+✓ Secret pipelines-as-code-secret has been created in pipelines-as-code namespace
+✓ Configuration complete!
+```
+
+## GitHub App Creation Process
+
+1. **Local webserver starts** on port 8080
+2. **Browser opens** to GitHub App creation page
+3. **App manifest submitted** with required permissions
+4. **Secret created** with App credentials in cluster
+5. **Configuration stored** in `pipelines-as-code` namespace
+
+### GitHub App Permissions
+
+The created GitHub App will have:
+
+- **Repository permissions:**
+  - Contents: Read & Write
+  - Issues: Read & Write
+  - Metadata: Read
+  - Pull Requests: Read & Write
+  - Checks: Read & Write
+  - Commit statuses: Read & Write
+
+- **Organization permissions:**
+  - Members: Read
+  - Administration: Read
+
+- **Events subscription:**
+  - Push
+  - Pull Request
+  - Issue Comment
+
+## GitHub Enterprise Setup
+
+For GitHub Enterprise installations:
+
+```bash
+tkn pac bootstrap --github-hostname github.company.com
+```
+
+The command will:
+1. Detect it's not public GitHub
+2. Set provider type to `github-enterprise-app`
+3. Use the correct API endpoints
+4. Create app on your GitHub Enterprise instance
+
+## Troubleshooting
+
+### PAC Already Installed
+
+If PAC is already installed:
+
+```bash
+✓ Pipelines as Code is already installed.
+👌 Skips bootstrapping GitHub App, as one is already configured.
+```
+
+Use `--force-configure` to reconfigure:
+
+```bash
+tkn pac bootstrap --force-configure
+```
+
+### Route Not Detected
+
+If auto-detection fails:
+
+```bash
+# Specify route manually
+tkn pac bootstrap --route-url https://pac.example.com
+```
+
+### Cluster Not Internet Accessible
+
+For clusters behind firewalls:
+
+```bash
+# Use gosmee for webhook forwarding
+tkn pac bootstrap --force-gosmee
+```
+
+Or on OpenShift with CRC:
+
+```bash
+tkn pac bootstrap --force-gosmee
+```
+
+### Browser Doesn't Open
+
+If the browser doesn't open automatically:
+
+1. Check the terminal output for the URL
+2. Manually open: `http://localhost:8080`
+3. Complete the GitHub App creation flow
+
+### Port Already in Use
+
+If port 8080 is busy:
+
+```bash
+tkn pac bootstrap --webserver-port 8081
+```
+
+## Files and Secrets Created
+
+### Secret: pipelines-as-code-secret
+
+Created in the PAC installation namespace with:
+
+- `github-application-id` - GitHub App ID
+- `github-private-key` - Private key for App authentication
+- `webhook.secret` - Webhook secret
+
+### ConfigMap: pipelines-as-code-info
+
+Stores installation metadata:
+
+- PAC version
+- Installation namespace
+- Controller URL
+
+## Related Commands
+
+- [`tkn pac create repo`](/cli/create) - Create Repository CRD after bootstrap
+- [`tkn pac generate`](/cli/generate) - Generate PipelineRun templates
+- [`tkn pac webhook`](/cli/webhook) - Manage webhook configuration
+
+## See Also
+
+- [Installation Guide](/docs/install/installation)
+- [GitHub App Guide](/docs/install/github_apps)
+- [Getting Started](/docs/install/getting-started)

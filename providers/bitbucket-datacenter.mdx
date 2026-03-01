@@ -1,0 +1,291 @@
+---
+title: Bitbucket Data Center Setup
+description: Configure Pipelines as Code with Bitbucket Data Center (Server) for on-premises Git repositories
+---
+
+# Bitbucket Data Center Setup
+
+Pipelines as Code has full support for [Bitbucket Data Center](https://www.atlassian.com/software/bitbucket/enterprise) (formerly Bitbucket Server), enabling CI/CD automation for on-premises Bitbucket installations.
+
+## Prerequisites
+
+Before starting, ensure you have [installed Pipelines as Code](/docs/install/installation) on your Kubernetes cluster.
+
+## Create Personal Access Token
+
+Create a personal access token for Pipelines as Code to interact with Bitbucket Data Center.
+
+<Steps>
+  <Step title="Navigate to token settings">
+    Follow Atlassian's guide: https://confluence.atlassian.com/bitbucketserver/personal-access-tokens-939515499.html
+    
+    1. Click your profile icon in Bitbucket
+    2. Go to **Manage account** > **Personal access tokens**
+    3. Click **Create a token**
+  </Step>
+  
+  <Step title="Configure token permissions">
+    The token needs these permissions:
+    
+    - **PROJECT_ADMIN** - For project-level operations
+    - **REPOSITORY_ADMIN** - For repository management and webhook configuration
+    
+    <Warning>
+    **Licensed User Requirement**
+    
+    The service account that owns the token must be a **licensed Bitbucket user** (granted the `LICENSED_USER` global permission) for group-based permission checks to work.
+    
+    If the service account is an unlicensed technical user:
+    - Group membership cannot be resolved
+    - Users with group-only access will not be able to trigger builds
+    - **Workaround**: Add those users individually to project or repository permissions
+    </Warning>
+  </Step>
+  
+  <Step title="Save the token">
+    Copy and securely store the generated token. You won't be able to view it again.
+  </Step>
+</Steps>
+
+<Note>
+The token needs access to forked repositories when processing pull requests from forks. Ensure the token owner has appropriate permissions.
+</Note>
+
+## Configure Webhook
+
+<Steps>
+  <Step title="Generate webhook secret">
+    Generate a secure random secret:
+    ```bash
+    head -c 30 /dev/random | base64
+    ```
+    
+    Save this value for both webhook configuration and Kubernetes secret creation.
+  </Step>
+  
+  <Step title="Get controller URL">
+    On OpenShift:
+    ```bash
+    echo https://$(oc get route -n pipelines-as-code pipelines-as-code-controller -o jsonpath='{.spec.host}')
+    ```
+    
+    For other Kubernetes distributions, get the ingress URL for the Pipelines as Code controller service.
+  </Step>
+  
+  <Step title="Create webhook in Bitbucket">
+    Follow [Atlassian's webhook guide](https://support.atlassian.com/bitbucket-cloud/docs/manage-webhooks/):
+    
+    1. Navigate to your repository in Bitbucket Data Center
+    2. Go to **Repository settings** > **Webhooks**
+    3. Click **Create webhook**
+    4. Configure:
+       - **Name**: `Pipelines-as-Code`
+       - **URL**: Your Pipelines as Code controller URL
+       - **Secret**: The secret you generated above
+       - **Status**: Active (enabled)
+    5. Select these events:
+       
+       **Repository events:**
+       - Push
+       - Modified
+       
+       **Pull Request events:**
+       - Opened
+       - Source branch updated
+       - Comments added
+    
+    6. Click **Create**
+  </Step>
+</Steps>
+
+## Create Repository CRD
+
+<Steps>
+  <Step title="Create Kubernetes secret">
+    Create a secret with the personal token and webhook secret:
+    
+    ```bash
+    kubectl -n target-namespace create secret generic bitbucket-datacenter-webhook-config \
+      --from-literal provider.token="TOKEN_AS_GENERATED_PREVIOUSLY" \
+      --from-literal webhook.secret="SECRET_AS_SET_IN_WEBHOOK_CONFIGURATION"
+    ```
+  </Step>
+  
+  <Step title="Create Repository CRD">
+    ```yaml
+    ---
+    apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+    kind: Repository
+    metadata:
+      name: my-repo
+      namespace: target-namespace
+    spec:
+      url: "https://bitbucket.example.com/scm/project/repo.git"
+      git_provider:
+        # The base URL of your Bitbucket Data Center instance
+        # Do NOT include the /rest suffix
+        url: "https://bitbucket.example.com"
+        user: "your-bitbucket-username"
+        secret:
+          name: "bitbucket-datacenter-webhook-config"
+          # Optionally specify a different key:
+          # key: "provider.token"
+        webhook_secret:
+          name: "bitbucket-datacenter-webhook-config"
+          # Optionally specify a different key:
+          # key: "webhook.secret"
+    ```
+    
+    <Note>
+    **Important URL Configuration**
+    
+    - `spec.url`: The Git clone URL of your repository
+    - `spec.git_provider.url`: The base URL of your Bitbucket Data Center instance (without `/rest` suffix)
+    - `spec.git_provider.user`: Your Bitbucket username
+    </Note>
+  </Step>
+  
+  <Step title="Apply the Repository CRD">
+    ```bash
+    kubectl apply -f repository.yaml
+    ```
+  </Step>
+</Steps>
+
+## Configuration Examples
+
+### Standard Configuration
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: my-app
+  namespace: my-app-pipelines
+spec:
+  url: "https://bitbucket.example.com/scm/myproject/my-app.git"
+  git_provider:
+    url: "https://bitbucket.example.com"
+    user: "pipeline-bot"
+    secret:
+      name: "bitbucket-token"
+    webhook_secret:
+      name: "bitbucket-token"
+```
+
+### With Custom Secret Keys
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: my-app
+  namespace: my-app-pipelines
+spec:
+  url: "https://bitbucket.example.com/scm/myproject/my-app.git"
+  git_provider:
+    url: "https://bitbucket.example.com"
+    user: "pipeline-bot"
+    secret:
+      name: "my-credentials"
+      key: "bitbucket-token"
+    webhook_secret:
+      name: "my-credentials"
+      key: "webhook-secret"
+```
+
+## Managing Tokens
+
+### Update Personal Access Token
+
+When your token expires or needs rotation:
+
+#### Using kubectl
+
+Find the secret name in your Repository CRD:
+```yaml
+spec:
+  git_provider:
+    secret:
+      name: "bitbucket-datacenter-webhook-config"
+```
+
+Update the token:
+```bash
+kubectl -n $target_namespace patch secret bitbucket-datacenter-webhook-config -p "{\"data\": {\"provider.token\": \"$(echo -n $NEW_TOKEN|base64 -w0)\"}}"
+```
+
+#### By Recreating the Secret
+
+```bash
+kubectl -n target-namespace delete secret bitbucket-datacenter-webhook-config
+
+kubectl -n target-namespace create secret generic bitbucket-datacenter-webhook-config \
+  --from-literal provider.token="NEW_TOKEN" \
+  --from-literal webhook.secret="SECRET_FROM_WEBHOOK_CONFIG"
+```
+
+## Important Notes
+
+- **Secrets scope**: Secrets cannot reference secrets in other namespaces. They must be in the same namespace as the Repository CRD
+- **CLI support**: `tkn pac create` and `tkn pac bootstrap` commands are not supported for Bitbucket Data Center
+- **User identification**: Reference users by `ACCOUNT_ID` in OWNERS files, not by username
+- **Licensed users**: Service accounts need licensed user status for group-based permissions
+- **API URL format**: Do not include `/rest` suffix in `git_provider.url`
+
+## Troubleshooting
+
+### Webhooks Not Being Received
+
+1. **Check webhook delivery**:
+   - Go to Repository settings > Webhooks in Bitbucket
+   - View webhook delivery history
+   - Check for failed requests or error responses
+
+2. **Verify controller logs**:
+   ```bash
+   kubectl -n pipelines-as-code logs deployment/pipelines-as-code-controller | grep bitbucket
+   ```
+
+3. **Test webhook manually**:
+   Click the webhook's test button in Bitbucket settings.
+
+### Authentication Failures
+
+Verify:
+- Token has `PROJECT_ADMIN` and `REPOSITORY_ADMIN` permissions
+- Token owner is a licensed Bitbucket user
+- Username in Repository CRD matches token owner
+- Secret exists in the correct namespace
+
+### API URL Issues
+
+<Warning>
+Common mistake: Including `/rest/api/1.0` in the `git_provider.url`
+
+Correct: `https://bitbucket.example.com`
+Incorrect: `https://bitbucket.example.com/rest/api/1.0`
+</Warning>
+
+Pipelines as Code automatically appends the API path.
+
+### SSL Certificate Errors
+
+For self-signed certificates, see the [certificate configuration documentation](/docs/install/certs).
+
+### Permission Errors for Fork Pull Requests
+
+Ensure:
+- Token owner has access to both source and target repositories
+- Service account is a licensed user
+- Users have direct permissions (not just group-based) if service account is unlicensed
+
+## Next Steps
+
+After configuring Bitbucket Data Center:
+
+1. Add `.tekton` directory with pipeline definitions to your repository
+2. Test by creating a pull request or pushing commits
+3. Monitor pipeline status in pull request comments and build status
+
+See the [Repository CRD documentation](/docs/guide/repositorycrd) for advanced configuration options.

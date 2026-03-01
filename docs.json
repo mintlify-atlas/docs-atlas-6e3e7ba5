@@ -1,122 +1,158 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Pipelines as Code",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#0066CC",
+    "light": "#4A9EFF",
+    "dark": "#003D7A"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/openshift-pipelines/pipelines-as-code"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/openshift-pipelines/pipelines-as-code"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "concepts"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Installation",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "installation/overview",
+              "installation/kubernetes",
+              "installation/openshift",
+              "installation/requirements"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Git Provider Setup",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "providers/github-app",
+              "providers/github-webhook",
+              "providers/gitlab",
+              "providers/bitbucket-cloud",
+              "providers/bitbucket-datacenter",
+              "providers/forgejo"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Core Guides",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "guides/creating-pipelines",
+              "guides/repository-crd",
+              "guides/running-pipelines",
+              "guides/pipeline-resolution",
+              "guides/event-matching",
+              "guides/gitops-commands"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/custom-parameters",
+              "advanced/incoming-webhooks",
+              "advanced/private-repositories",
+              "advanced/policy-authorization",
+              "advanced/concurrency",
+              "advanced/cleanup"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/configuration",
+              "operations/global-repository-settings",
+              "operations/logging",
+              "operations/metrics",
+              "operations/certificates",
+              "operations/multi-controller"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "CLI Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "cli/overview",
+              "cli/installation"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Commands",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "cli/bootstrap",
+              "cli/create",
+              "cli/generate",
+              "cli/repository",
+              "cli/logs",
+              "cli/describe",
+              "cli/resolve",
+              "cli/webhook",
+              "cli/version"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Custom Resources",
+            "pages": [
+              "api/repository",
+              "api/repository-spec",
+              "api/repository-status"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "api/configmap",
+              "api/settings"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Developer",
+        "groups": [
+          {
+            "group": "Contributing",
+            "pages": [
+              "dev/overview",
+              "dev/setup",
+              "dev/testing",
+              "dev/architecture"
+            ]
+          },
+          {
+            "group": "Workflows",
+            "pages": [
+              "dev/flows-diagram",
+              "dev/release-process"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

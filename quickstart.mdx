@@ -1,80 +1,369 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart guide
+description: Get up and running with Pipelines as Code in 5 minutes using the tkn pac CLI to bootstrap your first repository and run your first pipeline.
 ---
 
-## Get started in three steps
+# Quickstart guide
 
-Get your documentation site running locally and make your first customization.
+Get up and running with Pipelines as Code in just a few minutes using the `tkn pac` CLI. This guide will walk you through installing the CLI, bootstrapping Pipelines as Code on your cluster, creating a GitHub App, and running your first pipeline.
 
-### Step 1: Set up your local environment
+<Note>
+This guide assumes you're using the public GitHub instance. If you're using GitHub Enterprise, you'll need to use the `--github-hostname` flag with the hostname of your GitHub Enterprise instance.
+</Note>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+## Prerequisites
 
-### Step 2: Deploy your changes
+Before you begin, make sure you have:
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+- A Kubernetes cluster like [Kind](https://kind.sigs.k8s.io/), [Minikube](https://minikube.sigs.k8s.io/docs/start/), or [OpenShift Local](https://developers.redhat.com/products/openshift-local/overview)
+- [Tekton Pipelines](https://tekton.dev/docs/pipelines/install/) installed on your cluster (version 0.50.0+)
+- A GitHub account
+- `git` configured to push to GitHub
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Step 1: Install the tkn pac CLI
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+Choose your preferred installation method:
 
-### Step 3: Go live
+<Tabs>
+  <Tab title="Homebrew (macOS/Linux)">
+    ```bash
+    brew install openshift-pipelines/pipelines-as-code/tkn-pac
+    ```
+  </Tab>
+  <Tab title="Direct download (Linux)">
+    ```bash
+    # Download latest release
+    curl -L https://github.com/openshift-pipelines/pipelines-as-code/releases/latest/download/tkn-pac-linux-amd64 -o tkn-pac
+    chmod +x tkn-pac
+    sudo mv tkn-pac /usr/local/bin/
+    ```
+  </Tab>
+  <Tab title="Direct download (macOS)">
+    ```bash
+    # Download latest release
+    curl -L https://github.com/openshift-pipelines/pipelines-as-code/releases/latest/download/tkn-pac-darwin-amd64 -o tkn-pac
+    chmod +x tkn-pac
+    sudo mv tkn-pac /usr/local/bin/
+    ```
+  </Tab>
+</Tabs>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+Verify the installation:
+
+```bash
+tkn pac version
+```
+
+You should see output similar to:
+
+```
+Pipelines-as-Code version: v0.x.x
+```
+
+## Step 2: Bootstrap Pipelines as Code
+
+The `tkn pac bootstrap` command helps you start using Pipelines as Code quickly by:
+
+- Installing Pipelines as Code on your cluster (if not already installed)
+- Setting up a webhook forwarder for local development (optional)
+- Creating a GitHub Application
+- Configuring dashboard integration
+
+Run the bootstrap command:
+
+```bash
+tkn pac bootstrap
+```
+
+### Install Pipelines as Code
+
+The CLI will first check if Pipelines as Code is installed:
+
+```
+=> Checking if Pipelines-as-Code is installed.
+🕵️ Pipelines-as-Code doesn't seem to be installed in the pipelines-as-code namespace.
+? Do you want me to install Pipelines-as-Code v0.x.x? (Y/n)
+```
+
+Press `Y` to install it.
+
+### Set up webhook forwarder (optional)
+
+For local development, you'll be asked if you want to install [gosmee](https://github.com/chmouel/gosmee), a webhook forwarder:
+
+```
+Pipelines-as-Code does not install an Ingress object to allow the controller to be accessed from the internet.
+We can install a webhook forwarder called gosmee (https://github.com/chmouel/gosmee) using a https://hook.pipelinesascode.com URL.
+? Do you want me to install the gosmee forwarder? (Y/n)
+💡 Your gosmee forward URL has been generated: https://hook.pipelinesascode.com/zZVuUUOkCzPD
+```
+
+<Warning>
+While gosmee lets you get started quickly, it is not intended for production use. For production, you should set up a proper Ingress or Route to expose the Pipelines as Code webhook endpoint.
+</Warning>
+
+### Configure dashboard (optional)
+
+If you have the [Tekton Dashboard](https://github.com/tektoncd/dashboard) installed, the CLI will detect it:
+
+```
+👀 We have detected a tekton dashboard install on http://dashboard.paac-127-0-0-1.nip.io
+? Do you want me to use it? Yes
+```
+
+Press `Y` to use it for viewing pipeline logs and status.
+
+## Step 3: Create a GitHub Application
+
+The bootstrap command will now help you create a GitHub Application:
+
+```
+? Enter the name of your GitHub application: My PAAC Application
+```
+
+Enter a unique name for your GitHub Application (this name must be globally unique across all GitHub Apps).
+
+<Info>
+The CLI will launch your web browser with a URL to create the GitHub Application. Click the button and you'll be redirected to GitHub.
+</Info>
+
+On GitHub, you'll see the application creation screen. Unless you want to change the name, click the "Create GitHub App" button.
+
+Return to your terminal where you'll see:
+
+```
+🔑 Secret pipelines-as-code-secret has been created in the pipelines-as-code namespace
+🚀 You can now add your newly created application to your repository by going to this URL:
+
+https://github.com/apps/my-paac-application
+
+💡 Don't forget to run "tkn pac create repository" to create a new Repository CR on your cluster.
+```
+
+## Step 4: Create a GitHub repository
+
+If you don't have a repository, you can create one from our template:
+
+1. Go to https://github.com/openshift-pipelines/pac-demo/generate
+2. Choose your username and a repository name (e.g., `pac-demo`)
+3. Click "Create repository from template"
+
+Your repository is now created at `https://github.com/yourusername/pac-demo`.
+
+## Step 5: Install GitHub App on your repository
+
+Next, install the GitHub Application on your repository:
+
+<Steps>
+  <Step title="Visit the GitHub App URL">
+    Go to the GitHub App URL provided by `tkn pac bootstrap`, for example:
+    `https://github.com/apps/my-paac-application`
+  </Step>
+  <Step title="Click Install">
+    Click the "Install" button
+  </Step>
+  <Step title="Select repository">
+    Choose the repository you just created under your username
+  </Step>
+</Steps>
+
+## Step 6: Clone your repository
+
+Clone the repository to your local machine:
+
+```bash
+git clone https://github.com/yourusername/pac-demo
+cd pac-demo
+```
+
+## Step 7: Create a Repository CRD
+
+The Repository Custom Resource (CRD) tells Pipelines as Code which repository to watch and where to run PipelineRuns.
+
+<Info>
+A Repository CR is how you configure Pipelines as Code. The namespace location where you create the CR is where your PipelineRuns will be executed.
+</Info>
+
+Run the following command from inside your repository directory:
+
+```bash
+tkn pac create repository
+```
+
+The CLI will detect your repository information:
+
+```
+? Enter the Git repository url (default: https://github.com/yourusername/pac-demo):
+```
+
+Press Enter to use the default value.
+
+Next, choose the namespace where pipelines should run:
+
+```
+? Please enter the namespace where the pipeline should run (default: pac-demo-pipelines):
+! Namespace pac-demo-pipelines is not found
+? Would you like me to create the namespace pac-demo-pipelines? (Y/n)
+```
+
+Press `Y` to create the namespace.
+
+The command will:
+- Create a Repository CR in your cluster
+- Create a `.tekton` directory with a `pipelinerun.yaml` file
+- Detect your programming language and generate an appropriate template
+
+```
+ℹ Directory .tekton has been created.
+✓ We have detected your repository using the programming language Go.
+✓ A basic template has been created in .tekton/pipelinerun.yaml, feel free to customize it.
+ℹ You can test your pipeline by pushing the generated template to your git repository
+```
+
+## Step 8: Create a pull request
+
+Now let's test Pipelines as Code by creating a pull request:
+
+<Steps>
+  <Step title="Create a new branch">
+    ```bash
+    git checkout -b tektonci
+    ```
+  </Step>
+  <Step title="Commit the pipeline">
+    ```bash
+    git add .
+    git commit -m "Add Tekton CI"
+    ```
+  </Step>
+  <Step title="Push the branch">
+    ```bash
+    git push origin tektonci
+    ```
+  </Step>
+  <Step title="Create a pull request">
+    Go to `https://github.com/yourusername/pac-demo/pull/new/tektonci` and create a pull request
+  </Step>
+</Steps>
+
+As soon as you create the pull request, Pipelines as Code will be triggered and run on your Pull Request!
+
+## Step 9: View pipeline execution
+
+You'll see a status check on your pull request:
+
+- Click on the "Details" link to see the PipelineRun details
+- Pipelines as Code will provide a link to your Tekton Dashboard or OpenShift Console
+- Alternatively, use the `tkn pac` CLI to follow logs:
+
+```bash
+tkn pac logs -n pac-demo-pipelines -L
+```
+
+<Tabs>
+  <Tab title="Using CLI">
+    ```bash
+    # Follow the latest PipelineRun logs
+    tkn pac logs -n pac-demo-pipelines -L
+
+    # Or select a specific PipelineRun
+    tkn pac logs -n pac-demo-pipelines
+    ```
+  </Tab>
+  <Tab title="Using Dashboard">
+    Click the "Details" link on the GitHub check to open the Tekton Dashboard or OpenShift Console, where you can view:
+    - Real-time logs for each task
+    - Task execution timeline
+    - Resource usage
+    - Pipeline status
+  </Tab>
+</Tabs>
+
+## Step 10: Understanding the demo failure (optional)
+
+If you're using the pac-demo template, you might notice the pipeline fails on purpose. This demonstrates how Pipelines as Code:
+
+- Analyzes log errors from the PipelineRun
+- Matches errors to specific lines of code
+- Provides annotations on the pull request showing exactly where the issue is
+
+To fix the error in the demo:
+
+<Steps>
+  <Step title="Edit main.go">
+    Replace the contents with:
+    ```go
+    package main
+
+    import (
+        "fmt"
+        "os"
+    )
+
+    func main() {
+        fmt.Fprintf(os.Stdout, "Hello world")
+    }
+    ```
+  </Step>
+  <Step title="Commit and push">
+    ```bash
+    git commit -a -m "Fix linting errors"
+    git push origin tektonci
+    ```
+  </Step>
+  <Step title="Watch the pipeline succeed">
+    The pipeline will automatically run again and this time succeed!
+  </Step>
+</Steps>
+
+## What's next?
+
+Congratulations! You've successfully set up Pipelines as Code and run your first pipeline. Here's what to explore next:
+
+<CardGroup cols={2}>
+  <Card title="Core concepts" icon="book" href="/concepts">
+    Understand the architecture and key components
+  </Card>
+  <Card title="Writing pipelines" icon="code" href="/essentials/authoring-pipelines">
+    Learn how to customize your pipeline definitions
+  </Card>
+  <Card title="Repository CRD" icon="git-alt" href="/essentials/repository-crd">
+    Configure advanced repository settings
+  </Card>
+  <Card title="GitOps commands" icon="terminal" href="/essentials/gitops-commands">
+    Use /test, /retest, and /cancel commands
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### GitHub App not receiving webhooks
+
+If you're using gosmee for local development, make sure it's running:
+
+```bash
+kubectl get pods -n pipelines-as-code | grep gosmee
+```
+
+### Pipeline not triggering
+
+Check that:
+- The Repository CR exists in your namespace: `kubectl get repository -n pac-demo-pipelines`
+- The GitHub App is installed on your repository
+- Your `.tekton/pipelinerun.yaml` has the correct annotations for the event type
+
+### View Pipelines as Code logs
+
+```bash
+kubectl logs -n pipelines-as-code -l app.kubernetes.io/component=controller -f
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Now that you have Pipelines as Code running, you can:
 
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+- Customize your pipeline to match your project's needs
+- Add more tasks from [Tekton Hub](https://hub.tekton.dev/) or [Artifact Hub](https://artifacthub.io/)
+- Configure advanced features like secrets, conditional execution, and path-based triggers
+- Set up additional repositories
+- Explore different Git providers like GitLab or Bitbucket

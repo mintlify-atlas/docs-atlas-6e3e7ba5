@@ -1,0 +1,552 @@
+---
+title: Private Repositories
+description: Access private Git repositories and fetch remote tasks securely
+---
+
+## Overview
+
+Pipelines-as-Code automatically creates authentication credentials for accessing private Git repositories. When a PipelineRun is triggered, PAC generates a temporary secret containing Git credentials that can be used by the `git-clone` task and other tasks requiring repository access.
+
+## How It Works
+
+When PAC creates a PipelineRun, it automatically generates a secret with the following format:
+
+```
+pac-gitauth-<REPOSITORY_OWNER>-<REPOSITORY_NAME>-<RANDOM_STRING>
+```
+
+This secret contains:
+- **`.gitconfig`**: Git configuration file with authentication settings
+- **`.git-credentials`**: Git credentials file with the access token
+- **`git-provider-token`**: Raw token for direct API access
+
+The secret is configured to use the token from:
+- GitHub App installation (when using GitHub App authentication)
+- Git provider secret (when using webhook-based authentication)
+
+<Note>
+The secret has an `ownerReference` to the PipelineRun, so it's automatically deleted when you delete the PipelineRun.
+</Note>
+
+## Disabling Auto-Creation
+
+To disable automatic secret creation, configure the `secret-auto-create` setting in the `pipelines-as-code` ConfigMap:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+data:
+  secret-auto-create: "false"
+```
+
+<Warning>
+Disabling auto-creation means you must manually create and manage authentication secrets for private repositories.
+</Warning>
+
+## Using the Generated Secret
+
+### With git-clone Task
+
+The [git-clone task](https://artifacthub.io/packages/tekton-task/tekton-catalog-tasks/git-clone) expects a workspace named `basic-auth`:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: clone-private-repo
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+spec:
+  params:
+    - name: repo_url
+      value: "{{ repo_url }}"
+    - name: revision
+      value: "{{ revision }}"
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+    - name: basic-auth
+      secret:
+        secretName: "{{ git_auth_secret }}"
+  pipelineSpec:
+    params:
+      - name: repo_url
+      - name: revision
+    workspaces:
+      - name: source
+      - name: basic-auth
+    tasks:
+      - name: fetch-repository
+        workspaces:
+          - name: output
+            workspace: source
+          - name: basic-auth
+            workspace: basic-auth
+        taskRef:
+          name: git-clone
+        params:
+          - name: url
+            value: $(params.repo_url)
+          - name: revision
+            value: $(params.revision)
+```
+
+<ParamField path="{{ git_auth_secret }}" type="string">
+  Template variable that expands to the name of the auto-generated authentication secret.
+</ParamField>
+
+### Complete Example with Embedded Pipeline
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: build-private-repo
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request, push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  params:
+    - name: repo_url
+      value: "{{ repo_url }}"
+    - name: revision
+      value: "{{ revision }}"
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+    - name: basic-auth
+      secret:
+        secretName: "{{ git_auth_secret }}"
+  pipelineSpec:
+    params:
+      - name: repo_url
+      - name: revision
+    workspaces:
+      - name: source
+      - name: basic-auth
+    tasks:
+      - name: fetch-repository
+        workspaces:
+          - name: output
+            workspace: source
+          - name: basic-auth
+            workspace: basic-auth
+        taskRef:
+          name: git-clone
+          resolver: hub
+          params:
+            - name: catalog
+              value: tekton-catalog-tasks
+            - name: type
+              value: artifact
+            - name: kind
+              value: task
+            - name: name
+              value: git-clone
+            - name: version
+              value: "0.9"
+        params:
+          - name: url
+            value: $(params.repo_url)
+          - name: revision
+            value: $(params.revision)
+      
+      - name: build
+        runAfter:
+          - fetch-repository
+        workspaces:
+          - name: source
+            workspace: source
+        taskSpec:
+          workspaces:
+            - name: source
+          steps:
+            - name: build
+              image: golang:1.22
+              workingDir: $(workspaces.source.path)
+              script: |
+                #!/usr/bin/env sh
+                go build -v ./...
+```
+
+[Full example on GitHub](https://github.com/openshift-pipelines/pipelines-as-code/blob/main/test/testdata/pipelinerun_git_clone_private.yaml)
+
+## Using Token for Git Provider API Operations
+
+The generated secret includes a `git-provider-token` key for direct API access:
+
+```yaml
+tasks:
+  - name: create-pr-comment
+    params:
+      - name: MESSAGE
+        value: "Build completed successfully!"
+    taskSpec:
+      params:
+        - name: MESSAGE
+      steps:
+        - name: comment
+          image: registry.access.redhat.com/ubi9/ubi-minimal
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ git_auth_secret }}"
+                  key: git-provider-token
+          script: |
+            #!/usr/bin/env sh
+            curl -X POST \
+              -H "Authorization: token ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/{{ repo_owner }}/{{ repo_name }}/issues/{{ pull_request_number }}/comments \
+              -d "{\"body\": \"$(params.MESSAGE)\"}"
+```
+
+<Note>
+The token has the same permissions as the GitHub App installation or the webhook token, scoped to the repository.
+</Note>
+
+### Token Scoping
+
+By default, the GitHub App token is scoped only to the repository where the event originated. To extend access to additional repositories, see [Repository CRD Token Scoping](/docs/guide/repositorycrd#scoping-github-token-to-a-list-of-private-and-public-repositories).
+
+## Fetching Remote Tasks from Private Repositories
+
+### Using Tekton Remote Resolution
+
+To fetch tasks from private GitHub repositories using Tekton's remote resolution:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: fetch-private-task
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: task-from-private-repo
+        taskRef:
+          resolver: git
+          params:
+            - name: url
+              value: https://github.com/my-org/private-tasks
+            - name: revision
+              value: main
+            - name: pathInRepo
+              value: tasks/my-task.yaml
+            - name: token
+              value: "{{ git_auth_secret }}"
+```
+
+### Using PAC Resolver
+
+Pipelines-as-Code provides its own resolver for fetching tasks from private repositories:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: pac-resolver-example
+spec:
+  pipelineSpec:
+    tasks:
+      - name: private-task
+        taskRef:
+          resolver: http
+          params:
+            - name: url
+              value: https://raw.githubusercontent.com/my-org/private-tasks/main/task.yaml
+```
+
+The PAC resolver automatically uses the generated authentication secret.
+
+See the [Resolver documentation](/docs/guide/resolver#remote-http-url-from-a-private-github-repository) for more details.
+
+## Authentication Methods
+
+### GitHub App (Recommended)
+
+When using GitHub App authentication, PAC automatically:
+- Generates installation tokens for the repository
+- Configures Git credentials
+- Scopes access to the repository (and optionally additional repos)
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-private-repo
+spec:
+  url: "https://github.com/my-org/private-repo"
+```
+
+No additional configuration needed - GitHub App handles everything.
+
+### Webhook with Token
+
+For webhook-based providers (GitLab, Bitbucket, Gitea/Forgejo), provide a token:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gitlab-token
+type: Opaque
+stringData:
+  token: glpat-xxxxxxxxxxxxxxxxxxxx
+---
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: gitlab-private-repo
+spec:
+  url: "https://gitlab.com/my-org/private-repo"
+  git_provider:
+    type: gitlab
+    secret:
+      name: gitlab-token
+      key: token
+```
+
+<ParamField path="git_provider.type" type="string" required>
+  Git provider type. Supported values:
+  - `github` - GitHub.com or GitHub Enterprise
+  - `gitlab` - GitLab.com or self-hosted
+  - `bitbucket-cloud` - Bitbucket Cloud
+  - `bitbucket-datacenter` - Bitbucket Data Center
+  - `gitea` - Gitea instances
+  - `forgejo` - Forgejo instances
+</ParamField>
+
+## Secret Lifecycle
+
+### Auto-Deletion
+
+The generated secret is automatically deleted when:
+- The PipelineRun is deleted
+- The PipelineRun's retention policy triggers cleanup
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  annotations:
+    pipelinesascode.tekton.dev/max-keep-runs: "5"
+```
+
+When old PipelineRuns are cleaned up, their associated secrets are also removed.
+
+### Manual Management
+
+If you disable auto-creation, create secrets manually:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-git-auth
+type: kubernetes.io/basic-auth
+stringData:
+  username: git
+  password: ghp_xxxxxxxxxxxxxxxxxxxx
+```
+
+Reference it in your PipelineRun:
+
+```yaml
+workspaces:
+  - name: basic-auth
+    secret:
+      secretName: my-git-auth
+```
+
+## Troubleshooting
+
+<Accordion title="Authentication Failed">
+  **Symptoms:**
+  - `fatal: Authentication failed` errors
+  - `Permission denied` when cloning
+  
+  **Solutions:**
+  - Verify the GitHub App is installed on the repository
+  - Check that the webhook token has correct permissions
+  - Ensure the Repository CR URL matches the actual repository
+  - For GitHub Enterprise, verify the API URL is correct
+</Accordion>
+
+<Accordion title="Secret Not Found">
+  **Symptoms:**
+  - `secret "{{ git_auth_secret }}" not found`
+  - Template variable not expanded
+  
+  **Solutions:**
+  - Check that `secret-auto-create` is not set to `false`
+  - Verify the PipelineRun was created by PAC, not manually
+  - Ensure you're using the exact template syntax: `{{ git_auth_secret }}`
+</Accordion>
+
+<Accordion title="Cannot Access Additional Private Repositories">
+  **Symptoms:**
+  - Can clone the main repo but not referenced repos
+  - Task resolution fails for private remote tasks
+  
+  **Solutions:**
+  - Configure token scoping in the Repository CR
+  - Add repositories to `github_app_token_scope_repos`
+  - Verify the GitHub App is installed on all required repos
+  
+  See [Token Scoping](/docs/guide/repositorycrd#scoping-github-token-to-a-list-of-private-and-public-repositories) for details.
+</Accordion>
+
+<Accordion title="Token Expired or Invalid">
+  **Symptoms:**
+  - `401 Unauthorized` API responses
+  - Authentication works initially then fails
+  
+  **Solutions:**
+  - GitHub App tokens are valid for 1 hour - this should be sufficient for most pipelines
+  - For webhook tokens, verify the token hasn't been revoked
+  - Regenerate webhook tokens if needed
+  - Check token permissions/scopes are sufficient
+</Accordion>
+
+## Security Best Practices
+
+1. **Use GitHub App**: Prefer GitHub App authentication over personal access tokens
+2. **Scope Tokens**: Only grant access to repositories that are actually needed
+3. **Short-lived Tokens**: GitHub App tokens expire after 1 hour automatically
+4. **Audit Access**: Review which repositories can access GitHub App tokens
+5. **Cleanup**: Let PAC auto-delete secrets - don't disable unless necessary
+6. **Fine-grained PATs**: If using webhook auth, use fine-grained personal access tokens with minimal scopes
+
+## Examples
+
+<Accordion title="Multi-Repo Build with Private Dependencies">
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: app-with-deps
+spec:
+  url: "https://github.com/my-org/my-app"
+  settings:
+    github_app_token_scope_repos:
+      - "my-org/shared-library"
+      - "my-org/common-tasks"
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: build-with-deps
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+spec:
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 1Gi
+    - name: basic-auth
+      secret:
+        secretName: "{{ git_auth_secret }}"
+  pipelineSpec:
+    workspaces:
+      - name: source
+      - name: basic-auth
+    tasks:
+      - name: clone-main-repo
+        workspaces:
+          - name: output
+            workspace: source
+          - name: basic-auth
+            workspace: basic-auth
+        taskRef:
+          name: git-clone
+        params:
+          - name: url
+            value: "{{ repo_url }}"
+          - name: revision
+            value: "{{ revision }}"
+      
+      - name: fetch-dependencies
+        runAfter: [clone-main-repo]
+        workspaces:
+          - name: source
+            workspace: source
+        taskSpec:
+          workspaces:
+            - name: source
+          steps:
+            - name: fetch-lib
+              image: alpine/git
+              workingDir: $(workspaces.source.path)
+              env:
+                - name: GIT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{ git_auth_secret }}"
+                      key: git-provider-token
+              script: |
+                git clone https://${GIT_TOKEN}@github.com/my-org/shared-library vendor/lib
+```
+</Accordion>
+
+<Accordion title="Private Task Resolution">
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: use-private-tasks
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+spec:
+  pipelineSpec:
+    tasks:
+      # Fetch task from private repository
+      - name: custom-lint
+        taskRef:
+          resolver: git
+          params:
+            - name: url
+              value: https://github.com/my-org/private-tasks
+            - name: revision
+              value: v1.0.0
+            - name: pathInRepo
+              value: tasks/lint.yaml
+      
+      # Another private task
+      - name: security-scan
+        taskRef:
+          resolver: http
+          params:
+            - name: url
+              value: https://raw.githubusercontent.com/my-org/security-tasks/main/scan.yaml
+```
+</Accordion>
+
+## See Also
+
+- [Repository CRD](/docs/guide/repositorycrd) - Repository configuration reference
+- [Resolver](/docs/guide/resolver) - Fetching remote tasks and pipelines
+- [Authoring PipelineRuns](/docs/guide/authoringprs) - Template variables reference
+- [GitHub App Installation](/docs/install/github) - Setting up GitHub App authentication

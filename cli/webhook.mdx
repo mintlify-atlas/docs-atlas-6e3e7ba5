@@ -1,0 +1,518 @@
+---
+title: tkn pac webhook
+description: Manage webhook secrets and provider tokens for Pipelines-as-Code repositories
+---
+
+# tkn pac webhook
+
+Manage webhook configuration for Pipelines-as-Code repositories including secrets and provider tokens.
+
+## Available Commands
+
+- [`add`](#add) - Add webhook secret and configure on Git provider
+- [`update-token`](#update-token) - Update provider token in existing secret
+
+---
+
+## add
+
+Add a new webhook secret for a Git provider and configure it on the provider settings.
+
+### Synopsis
+
+```bash
+tkn pac webhook add [repository-name] [flags]
+```
+
+### Description
+
+The `webhook add` command:
+
+1. **Selects a repository** (prompts if not specified)
+2. **Detects Git provider** (GitHub, GitLab, Bitbucket, etc.)
+3. **Prompts for credentials** (personal access token, webhook secret)
+4. **Creates Kubernetes secrets** for authentication
+5. **Configures webhook** on the Git provider
+6. **Updates Repository CRD** with secret references
+
+This command is useful for:
+- Repositories not using GitHub App
+- Adding webhooks to existing repositories
+- Reconfiguring webhook secrets
+
+<Note>
+  If using **GitHub App**, webhook configuration is automatic. This command is not needed.
+</Note>
+
+### Usage Examples
+
+<CodeGroup>
+
+```bash Interactive
+# Select repository interactively
+tkn pac webhook add
+```
+
+```bash Specify Repository
+# Add webhook for specific repository
+tkn pac webhook add myorg-app
+```
+
+```bash Specific Namespace
+# Add webhook in specific namespace
+tkn pac webhook add myorg-app -n production
+```
+
+```bash With PAC Namespace
+# Specify where PAC is installed
+tkn pac webhook add myorg-app --pac-namespace pipelines-as-code
+```
+
+</CodeGroup>
+
+### Arguments
+
+<ParamField path="repository-name" type="string">
+  Repository name (optional - prompts if not provided)
+</ParamField>
+
+### Flags
+
+<ParamField path="-n, --namespace" type="string">
+  Namespace containing the repository
+</ParamField>
+
+<ParamField path="--pac-namespace" type="string">
+  Namespace where Pipelines-as-Code is installed
+</ParamField>
+
+### Interactive Flow
+
+#### 1. Repository Selection
+
+If not specified:
+
+```
+? Select a repository:
+  › myorg-api
+    myorg-frontend
+    myorg-docs
+```
+
+#### 2. Provider Detection
+
+Automatically detected from repository URL:
+
+```
+Detected provider: GitHub
+```
+
+#### 3. Personal Access Token
+
+```
+? Enter your personal access token: ****
+```
+
+#### 4. Webhook Secret
+
+```
+? Enter webhook secret (leave empty to auto-generate): 
+```
+
+If left empty, a secure random secret is generated.
+
+#### 5. Webhook Configuration
+
+```
+✓ Webhook configured on https://github.com/myorg/app
+✓ Secret git-provider-secret has been created
+✓ Secret webhook-secret has been created
+✓ Repository myorg-app has been updated
+```
+
+### Output Example
+
+```bash
+$ tkn pac webhook add myorg-app
+
+Detected provider: GitHub
+
+? Enter your personal access token: ****
+? Enter webhook secret (leave empty to auto-generate): 
+
+✓ Webhook configured on https://github.com/myorg/app
+  Webhook ID: 123456789
+  Events: push, pull_request, issue_comment
+
+✓ Secret git-provider-secret has been created in production namespace
+✓ Secret webhook-secret has been created in production namespace
+✓ Repository myorg-app has been updated with secret references
+```
+
+### Provider-Specific Requirements
+
+#### GitHub
+
+**Token Scopes Required:**
+- `repo` - Full control of private repositories
+- `admin:repo_hook` - Write access to repository hooks
+
+**Create Token:**
+1. Go to Settings → Developer settings → Personal access tokens
+2. Generate new token (classic)
+3. Select required scopes
+4. Copy token
+
+#### GitLab
+
+**Token Scopes Required:**
+- `api` - Full API access
+- `read_repository` - Read repository
+
+**Create Token:**
+1. Go to Preferences → Access Tokens
+2. Create personal access token
+3. Select required scopes
+4. Copy token
+
+#### Bitbucket Cloud
+
+**App Password Required:**
+- `repository:write` - Write access to repositories
+- `webhook` - Manage webhooks
+
+**Create App Password:**
+1. Go to Personal settings → App passwords
+2. Create app password
+3. Select required permissions
+4. Copy password
+
+#### Bitbucket Server/Data Center
+
+**Token Required:**
+- `REPO_ADMIN` - Repository administration
+
+**Create Token:**
+1. Go to Personal settings → Personal access tokens
+2. Create token with REPO_ADMIN
+3. Copy token
+
+### Created Secrets
+
+Two Kubernetes secrets are created:
+
+#### git-provider-secret
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-provider-secret
+  namespace: production
+type: Opaque
+data:
+  token: <base64-encoded-token>
+```
+
+#### webhook-secret
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: webhook-secret
+  namespace: production
+type: Opaque
+data:
+  webhook-secret: <base64-encoded-secret>
+```
+
+### Repository CRD Update
+
+The Repository is updated with secret references:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: myorg-app
+spec:
+  url: "https://github.com/myorg/app"
+  git_provider:
+    secret:
+      name: "git-provider-secret"
+      key: "token"
+    webhook_secret:
+      name: "webhook-secret"
+      key: "webhook-secret"
+```
+
+### Webhook Configuration on Provider
+
+The webhook is configured with:
+
+**Payload URL:**
+```
+https://<pac-controller-url>/incoming
+```
+
+**Events:**
+- Push
+- Pull Request
+- Issue Comment (for `/test`, `/retest` commands)
+
+**Content Type:**
+```
+application/json
+```
+
+**Secret:**
+The webhook secret for payload validation
+
+### Troubleshooting
+
+**GitHub App Already Configured:**
+
+```
+✓ Repository myorg-app has been created in production namespace
+✓ A basic template has been created in .tekton/pipelinerun.yaml
+```
+
+If GitHub App is configured, webhooks are automatic. No action needed.
+
+**Invalid Token:**
+
+```
+Error: failed to create webhook: 401 Unauthorized
+```
+
+Solution: Verify token has correct scopes and is not expired.
+
+**Webhook Already Exists:**
+
+```
+Error: webhook already exists for this URL
+```
+
+Solution: Delete existing webhook from provider settings or update it.
+
+**Cannot Access Repository:**
+
+```
+Error: failed to access repository: 404 Not Found
+```
+
+Solutions:
+- Verify repository URL is correct
+- Ensure token has access to the repository
+- Check repository visibility (private vs public)
+
+---
+
+## update-token
+
+Update the provider token in an existing webhook secret.
+
+### Synopsis
+
+```bash
+tkn pac webhook update-token [repository-name] [flags]
+```
+
+### Description
+
+The `update-token` command updates the personal access token or API key in an existing Git provider secret. This is useful when:
+
+- Token has expired
+- Token was rotated for security
+- Need to use a different account
+- Changing token scopes
+
+<Note>
+  This command only updates the **token**, not the webhook configuration. The webhook on the Git provider remains unchanged.
+</Note>
+
+### Usage Examples
+
+<CodeGroup>
+
+```bash Interactive
+# Select repository interactively
+tkn pac webhook update-token
+```
+
+```bash Specify Repository
+# Update token for specific repository
+tkn pac webhook update-token myorg-app
+```
+
+```bash Specific Namespace
+# Update in specific namespace
+tkn pac webhook update-token myorg-app -n production
+```
+
+</CodeGroup>
+
+### Arguments
+
+<ParamField path="repository-name" type="string">
+  Repository name (optional - prompts if not provided)
+</ParamField>
+
+### Flags
+
+<ParamField path="-n, --namespace" type="string">
+  Namespace containing the repository
+</ParamField>
+
+### Interactive Flow
+
+#### 1. Repository Selection
+
+```
+? Select a repository:
+  › myorg-api
+    myorg-frontend
+    myorg-docs
+```
+
+#### 2. Token Input
+
+```
+? Please enter your personal access token: ****
+```
+
+#### 3. Confirmation
+
+```
+🔑 Secret git-provider-secret has been updated with new personal access token in the production namespace.
+```
+
+### Output Example
+
+```bash
+$ tkn pac webhook update-token myorg-app
+
+? Please enter your personal access token: ****
+
+🔑 Secret git-provider-secret has been updated with new personal access token in the production namespace.
+```
+
+### When to Update Token
+
+1. **Token Expired**
+   ```
+   Error on PipelineRun: 401 Unauthorized
+   ```
+
+2. **Token Revoked**
+   ```
+   Cannot access repository: token is no longer valid
+   ```
+
+3. **Security Rotation**
+   - Regular security practice
+   - After team member leaves
+   - Suspected compromise
+
+4. **Scope Changes**
+   - Need additional permissions
+   - Reduce token privileges
+
+### Common Workflows
+
+#### Rotate Expired Token
+
+```bash
+# Generate new token from provider
+# Then update:
+tkn pac webhook update-token myorg-app
+```
+
+#### Update Multiple Repositories
+
+```bash
+# Update token for all repositories using same token
+tkn pac webhook update-token api-repo
+tkn pac webhook update-token frontend-repo
+tkn pac webhook update-token docs-repo
+```
+
+#### Security Incident Response
+
+```bash
+# Revoke compromised token on provider
+# Generate new token
+# Update all affected repositories
+tkn pac webhook update-token myorg-app
+```
+
+### Troubleshooting
+
+**Webhook Not Configured:**
+
+```
+ℹ️ Webhook is not configured for the repository myorg-app
+```
+
+Solution: Use `tkn pac webhook add` first to configure webhook.
+
+**GitHub App Configured:**
+
+```
+Webhook is not configured for the repository myorg-app
+```
+
+If using GitHub App, tokens are managed by the app. This command is not applicable.
+
+**Empty Secret:**
+
+```
+⚠️ Can not update provider token when git_provider secret is empty
+```
+
+Solution: The repository configuration is incomplete. Use `tkn pac webhook add` to configure properly.
+
+**Secret Not Found:**
+
+```
+Error: secrets "git-provider-secret" not found
+```
+
+Solution: Secret was deleted. Use `tkn pac webhook add` to recreate.
+
+**Permission Denied:**
+
+```
+Error: secrets is forbidden
+```
+
+Solution: Request RBAC permissions to update secrets in the namespace.
+
+### Verification
+
+After updating token, verify it works:
+
+```bash
+# Trigger a test run
+git commit --allow-empty -m "test: verify new token"
+git push
+
+# Check logs
+tkn pac logs myorg-app --last
+```
+
+---
+
+## Related Commands
+
+- [`tkn pac create repo`](/cli/create) - Create repository with webhook
+- [`tkn pac bootstrap`](/cli/bootstrap) - Bootstrap with GitHub App
+- [`tkn pac list`](/cli/repository#list) - List repositories
+
+## See Also
+
+- [Webhook Configuration](/docs/install/settings#webhook)
+- [GitHub Webhook Guide](/docs/install/github_webhook)
+- [GitLab Configuration](/docs/install/gitlab)
+- [Bitbucket Configuration](/docs/install/bitbucket-cloud)

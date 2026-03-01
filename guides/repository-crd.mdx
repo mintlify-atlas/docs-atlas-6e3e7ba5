@@ -1,0 +1,611 @@
+---
+title: Repository Custom Resource
+description: Configure the Repository CRD to connect your Git repository with Pipelines-as-Code
+---
+
+## Overview
+
+The Repository Custom Resource (CR) is the central configuration object that connects your Git repository to Pipelines-as-Code. It tells PAC:
+
+- Which repository events to handle
+- Where to run PipelineRuns (namespace)
+- How to authenticate with the Git provider
+- Custom parameters and settings
+
+<Info>
+A Repository CR must be created in your project namespace (not in the `pipelines-as-code` or `openshift-pipelines` namespace).
+</Info>
+
+## Basic Configuration
+
+<Steps>
+
+### Create a Repository CR
+
+The minimal configuration requires only a repository URL:
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: my-repository
+  namespace: my-project
+spec:
+  url: "https://github.com/owner/repo"
+```
+
+### Apply the configuration
+
+<Tabs>
+<Tab title="Using kubectl">
+```bash
+kubectl create -f repository.yaml
+```
+</Tab>
+
+<Tab title="Using tkn pac CLI">
+```bash
+tkn pac create repository
+```
+
+Follow the interactive prompts to configure your repository.
+</Tab>
+
+<Tab title="Inline with kubectl">
+```bash
+cat <<EOF | kubectl create -n my-project -f-
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: my-repository
+spec:
+  url: "https://github.com/owner/repo"
+EOF
+```
+</Tab>
+</Tabs>
+
+</Steps>
+
+## Repository Spec Fields
+
+### URL
+
+<ParamField path="spec.url" type="string" required>
+  The full HTTP/HTTPS URL of your Git repository
+  
+  ```yaml
+  spec:
+    url: "https://github.com/owner/repo"
+  ```
+</ParamField>
+
+<Warning>
+Pipelines-as-Code uses a Mutating Admission Webhook to enforce one Repository CRD per URL cluster-wide. This prevents repository hijacking in multi-tenant clusters.
+</Warning>
+
+### Git Provider Configuration
+
+<ParamField path="spec.git_provider" type="object">
+  Git provider authentication and API configuration
+  
+  ```yaml
+  spec:
+    git_provider:
+      type: "github"  # github, gitlab, bitbucket-cloud, bitbucket-datacenter, forgejo, gitea
+      url: "https://api.github.com"  # API endpoint
+      user: "git"  # Username for authentication
+      secret:
+        name: "github-webhook-secret"
+        key: "token"
+      webhook_secret:
+        name: "webhook-secret"
+        key: "secret"
+  ```
+</ParamField>
+
+#### Supported Git Provider Types
+
+<Tabs>
+<Tab title="GitHub">
+```yaml
+spec:
+  git_provider:
+    type: "github"
+    url: "https://api.github.com"  # or GitHub Enterprise URL
+    secret:
+      name: "github-token"
+      key: "token"
+```
+</Tab>
+
+<Tab title="GitLab">
+```yaml
+spec:
+  git_provider:
+    type: "gitlab"
+    url: "https://gitlab.com"  # or self-hosted GitLab URL
+    secret:
+      name: "gitlab-token"
+      key: "token"
+```
+</Tab>
+
+<Tab title="Bitbucket Cloud">
+```yaml
+spec:
+  git_provider:
+    type: "bitbucket-cloud"
+    user: "username"
+    secret:
+      name: "bitbucket-token"
+      key: "token"
+```
+</Tab>
+
+<Tab title="Bitbucket Data Center">
+```yaml
+spec:
+  git_provider:
+    type: "bitbucket-datacenter"
+    url: "https://bitbucket.mycompany.com"
+    secret:
+      name: "bitbucket-token"
+      key: "token"
+```
+</Tab>
+
+<Tab title="Forgejo/Gitea">
+```yaml
+spec:
+  git_provider:
+    type: "forgejo"  # or "gitea" (alias)
+    url: "https://forgejo.mycompany.com"
+    secret:
+      name: "forgejo-token"
+      key: "token"
+```
+</Tab>
+</Tabs>
+
+### Concurrency Limit
+
+<ParamField path="spec.concurrency_limit" type="integer">
+  Maximum number of concurrent PipelineRuns for this repository
+  
+  ```yaml
+  spec:
+    concurrency_limit: 3
+  ```
+  
+  When multiple PipelineRuns match an event, they run in alphabetical order by name. Only the specified number run concurrently; others queue.
+</ParamField>
+
+**Example**: With 3 PipelineRuns and `concurrency_limit: 1`:
+
+```yaml
+# .tekton/a-build.yaml (runs first)
+# .tekton/b-test.yaml (queued)
+# .tekton/c-lint.yaml (queued)
+```
+
+<Info>
+For Kubernetes-native queuing, consider using [Kueue](https://kueue.sigs.k8s.io/) via the experimental [tekton-kueue](https://github.com/konflux-ci/tekton-kueue) integration.
+</Info>
+
+### Incoming Webhooks
+
+<ParamField path="spec.incoming" type="array">
+  Configure external webhook triggers
+  
+  ```yaml
+  spec:
+    incoming:
+      - type: "webhook-url"
+        secret:
+          name: "webhook-secret"
+          key: "token"
+        params:
+          - "param1"
+          - "param2"
+        targets:
+          - "main"
+          - "develop"
+  ```
+</ParamField>
+
+### Custom Parameters
+
+<ParamField path="spec.params" type="array">
+  Define repository-level parameters available in PipelineRuns
+  
+  ```yaml
+  spec:
+    params:
+      - name: "image_registry"
+        value: "quay.io/myorg"
+      - name: "database_url"
+        secret_ref:
+          name: "db-credentials"
+          key: "url"
+      - name: "deploy_to_staging"
+        value: "true"
+        filter: 'event == "pull_request"'
+  ```
+</ParamField>
+
+<Tabs>
+<Tab title="String Value">
+```yaml
+params:
+  - name: "environment"
+    value: "staging"
+```
+</Tab>
+
+<Tab title="Secret Reference">
+```yaml
+params:
+  - name: "api_token"
+    secret_ref:
+      name: "api-credentials"
+      key: "token"
+```
+</Tab>
+
+<Tab title="Filtered Parameter">
+```yaml
+params:
+  - name: "docker_registry"
+    value: "registry.staging.example.com"
+    filter: 'event == "pull_request"'
+```
+
+This parameter is only available when the event type is `pull_request`.
+</Tab>
+</Tabs>
+
+## Settings Configuration
+
+<ParamField path="spec.settings" type="object">
+  Repository-specific operational settings
+</ParamField>
+
+### PipelineRun Provenance
+
+<ParamField path="spec.settings.pipelinerun_provenance" type="string">
+  Controls where PipelineRun definitions are fetched from
+  
+  - `source` (default): Fetch from the event's source branch/SHA
+  - `default_branch`: Always fetch from the repository's default branch
+  
+  ```yaml
+  spec:
+    settings:
+      pipelinerun_provenance: "default_branch"
+  ```
+</ParamField>
+
+<Info>
+Using `default_branch` adds a security layer: only users who can merge to the default branch can modify PipelineRuns.
+</Info>
+
+### GitHub Settings
+
+<ParamField path="spec.settings.github" type="object">
+  GitHub-specific configuration
+</ParamField>
+
+#### Comment Strategy
+
+```yaml
+spec:
+  settings:
+    github:
+      comment_strategy: "update"  # "", "update", or "disable_all"
+```
+
+- `""` (default): Create new comments for each PipelineRun status update
+- `"update"`: Update a single comment per PipelineRun
+- `"disable_all"`: No status comments (errors still commented)
+
+#### GitHub Token Scoping
+
+<ParamField path="spec.settings.github_app_token_scope_repos" type="array">
+  Extend GitHub App token scope to additional repositories
+  
+  ```yaml
+  spec:
+    settings:
+      github_app_token_scope_repos:
+        - "owner/project"
+        - "owner1/*"  # Glob pattern
+  ```
+  
+  All repositories must exist in the same namespace.
+</ParamField>
+
+**Prerequisites**:
+
+1. Set `secret-github-app-token-scoped: "false"` in the `pipelines-as-code` ConfigMap
+2. List additional repositories (exact names or glob patterns)
+
+**Global Configuration** (admin-only):
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipelines-as-code
+  namespace: pipelines-as-code
+data:
+  secret-github-app-token-scoped: "false"
+  secret-github-app-scope-extra-repos: "owner2/project2, owner3/*"
+```
+
+**Combined Example**:
+
+Global config:
+```yaml
+data:
+  secret-github-app-scope-extra-repos: "owner2/project2, owner3/project3"
+```
+
+Repository CR:
+```yaml
+spec:
+  settings:
+    github_app_token_scope_repos:
+      - "owner/project"
+      - "owner1/project1"
+```
+
+Token is scoped to: `owner/project`, `owner1/project1`, `owner2/project2`, `owner3/project3`, and the original repository.
+
+### GitLab Settings
+
+<ParamField path="spec.settings.gitlab" type="object">
+  GitLab-specific configuration
+</ParamField>
+
+```yaml
+spec:
+  settings:
+    gitlab:
+      comment_strategy: "disable_all"  # "", "update", or "disable_all"
+```
+
+GitLab updates commit statuses via the API when possible. Comments are only posted when:
+- Both source and target project status updates fail (insufficient permissions)
+- `comment_strategy` is not `"disable_all"`
+
+### Forgejo/Gitea Settings
+
+<ParamField path="spec.settings.forgejo" type="object">
+  Forgejo/Gitea-specific configuration
+</ParamField>
+
+```yaml
+spec:
+  settings:
+    forgejo:
+      user_agent: "my-custom-agent"  # Custom User-Agent header
+      comment_strategy: "update"  # "", "update", or "disable_all"
+```
+
+**Custom User-Agent**: Useful when the Forgejo instance is behind AI scraping protection (e.g., Anubis proxy) that blocks requests without a recognized User-Agent.
+
+### Authorization Policy
+
+<ParamField path="spec.settings.policy" type="object">
+  Control who can trigger PipelineRuns
+  
+  ```yaml
+  spec:
+    settings:
+      policy:
+        ok_to_test:
+          - "maintainer1"
+          - "maintainer2"
+        pull_request:
+          - "contributor1"
+          - "contributor2"
+  ```
+</ParamField>
+
+- `ok_to_test`: Users who can approve external PRs with `/ok-to-test`
+- `pull_request`: External contributors explicitly allowed to run CI
+
+See the [Authorization Policy guide](/guides/running-pipelines#acl-permissions) for details.
+
+### AI Analysis
+
+<ParamField path="spec.settings.ai" type="object">
+  Enable AI-powered pipeline failure analysis
+  
+  ```yaml
+  spec:
+    settings:
+      ai:
+        enabled: true
+        provider: "openai"
+        model: "gpt-4"
+  ```
+</ParamField>
+
+## Complete Examples
+
+### GitHub Repository with Settings
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: my-app
+  namespace: my-project
+spec:
+  url: "https://github.com/myorg/my-app"
+  concurrency_limit: 2
+  params:
+    - name: "image_registry"
+      value: "quay.io/myorg"
+    - name: "deploy_env"
+      value: "staging"
+      filter: 'event == "pull_request"'
+  settings:
+    pipelinerun_provenance: "default_branch"
+    github:
+      comment_strategy: "update"
+    policy:
+      ok_to_test:
+        - "team-lead"
+        - "senior-dev"
+```
+
+### GitLab Repository with Webhook
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: gitlab-project
+  namespace: ci-namespace
+spec:
+  url: "https://gitlab.com/mygroup/myproject"
+  git_provider:
+    type: "gitlab"
+    url: "https://gitlab.com"
+    secret:
+      name: "gitlab-token"
+      key: "token"
+    webhook_secret:
+      name: "gitlab-webhook-secret"
+      key: "secret"
+  settings:
+    gitlab:
+      comment_strategy: "update"
+```
+
+### Self-hosted Forgejo Repository
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: forgejo-repo
+  namespace: dev-team
+spec:
+  url: "https://git.mycompany.com/team/project"
+  git_provider:
+    type: "forgejo"
+    url: "https://git.mycompany.com"
+    secret:
+      name: "forgejo-credentials"
+      key: "token"
+  settings:
+    forgejo:
+      user_agent: "mycompany-ci-agent"
+      comment_strategy: "disable_all"
+```
+
+### Multi-Repository Token Scoping
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: mono-repo
+  namespace: platform
+spec:
+  url: "https://github.com/myorg/mono-repo"
+  settings:
+    github_app_token_scope_repos:
+      - "myorg/shared-tasks"      # Access shared task definitions
+      - "myorg/infrastructure/*"   # Access all infra repos
+    pipelinerun_provenance: "default_branch"
+  params:
+    - name: "shared_task_repo"
+      value: "https://github.com/myorg/shared-tasks"
+```
+
+## Target Namespace Annotation
+
+For added security, explicitly target a namespace in your PipelineRun:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: my-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/target-namespace: "my-namespace"
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+```
+
+This prevents bad actors from hijacking PipelineRun execution to unauthorized namespaces.
+
+## Troubleshooting
+
+### Repository not matching events
+
+<Steps>
+
+### Verify Repository CR exists
+
+```bash
+kubectl get repository -n my-namespace
+```
+
+### Check URL matches exactly
+
+```bash
+kubectl get repository my-repo -n my-namespace -o jsonpath='{.spec.url}'
+```
+
+URL must match the webhook payload exactly (including `.git` suffix if present).
+
+### Check webhook configuration
+
+Verify the webhook secret is correct:
+
+```bash
+kubectl get secret webhook-secret -n my-namespace -o yaml
+```
+
+### Check PAC controller logs
+
+```bash
+kubectl logs -n pipelines-as-code deployment/pipelines-as-code-controller
+```
+
+</Steps>
+
+### Token scoping failures
+
+If GitHub token scoping fails:
+
+```text
+failed to scope GitHub token as repo with pattern owner/repo does not exist in namespace my-namespace
+```
+
+**Solutions**:
+1. Ensure all repositories exist in the same namespace as the Repository CR
+2. Verify the GitHub App is installed for all specified repositories
+3. Check glob patterns match correctly
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Pipelines" icon="code" href="/guides/creating-pipelines">
+    Learn how to create PipelineRun definitions
+  </Card>
+  <Card title="Event Matching" icon="filter" href="/guides/event-matching">
+    Configure advanced event matching with annotations
+  </Card>
+  <Card title="Running Pipelines" icon="play" href="/guides/running-pipelines">
+    Understand execution, permissions, and monitoring
+  </Card>
+  <Card title="Custom Parameters" icon="sliders" href="/guides/custom-parameters">
+    Define and use custom parameters in pipelines
+  </Card>
+</CardGroup>

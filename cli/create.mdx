@@ -1,0 +1,392 @@
+---
+title: tkn pac create
+description: Create Pipelines-as-Code Repository custom resource definitions
+---
+
+# tkn pac create
+
+Create a new Pipelines-as-Code Repository custom resource definition.
+
+## Synopsis
+
+```bash
+tkn pac create repository [flags]
+tkn pac create repo [flags]
+```
+
+## Description
+
+The `create repository` command creates a new Pipelines-as-Code `Repository` CRD that links a Git repository to your Kubernetes cluster. It will:
+
+1. **Prompt for namespace** (or create if it doesn't exist)
+2. **Prompt for Git repository URL**
+3. **Create the Repository CRD**
+4. **Configure webhook** (if not using GitHub App)
+5. **Generate sample PipelineRun** in `.tekton/` directory
+
+The generated PipelineRun targets the `main` branch with `pull_request` and `push` events.
+
+## Usage Examples
+
+<CodeGroup>
+
+```bash Interactive Mode
+# Create repository interactively
+tkn pac create repo
+```
+
+```bash With Repository Name
+# Specify repository name
+tkn pac create repo --name my-app
+```
+
+```bash With URL
+# Specify repository URL
+tkn pac create repo --url https://github.com/myorg/myapp
+```
+
+```bash With Namespace
+# Specify target namespace
+tkn pac create repo \
+  --namespace my-pipelines \
+  --url https://github.com/myorg/myapp
+```
+
+```bash Full Example
+# All flags specified
+tkn pac create repo \
+  --name my-application \
+  --url https://github.com/myorg/myapp \
+  --namespace production-pipelines \
+  --pac-namespace pipelines-as-code
+```
+
+```bash From Current Directory
+# Auto-detect Git URL from current directory
+cd ~/projects/myapp
+tkn pac create repo
+```
+
+</CodeGroup>
+
+## Interactive Prompts
+
+When running without flags, you'll be prompted for:
+
+### 1. Git Repository URL
+
+If run from a Git repository, the URL is auto-detected:
+
+```
+Enter the Git repository URL (default: https://github.com/myorg/myapp):
+```
+
+### 2. Target Namespace
+
+Choose where PipelineRuns will execute:
+
+```
+Please enter the namespace where the pipeline should run (default: myapp-pipelines):
+```
+
+If the namespace doesn't exist:
+
+```
+⚠️ Namespace production-pipelines is not found
+Would you like me to create the namespace production-pipelines? (Y/n)
+```
+
+### 3. Webhook Configuration
+
+If GitHub App is not configured:
+
+```
+? Select your Git provider:
+  › GitHub
+    GitLab
+    Bitbucket Cloud
+    Bitbucket Server
+    Forgejo
+
+? Enter your personal access token: ****
+? Enter webhook secret: ****
+```
+
+## Flags
+
+<ParamField path="--name" type="string">
+  Repository name (defaults to auto-generated from URL)
+</ParamField>
+
+<ParamField path="--url" type="string">
+  Git repository URL (e.g., `https://github.com/org/repo`)
+</ParamField>
+
+<ParamField path="-n, --namespace" type="string">
+  Target namespace where PipelineRuns will be created
+</ParamField>
+
+<ParamField path="--pac-namespace" type="string">
+  Namespace where Pipelines-as-Code is installed
+</ParamField>
+
+<ParamField path="-C, --no-color" type="boolean">
+  Disable colored output
+</ParamField>
+
+## Output Example
+
+```bash
+$ tkn pac create repo
+
+Enter the Git repository URL (default: https://github.com/myorg/myapp):
+Please enter the namespace where the pipeline should run (default: myapp-pipelines): production
+
+✓ Namespace production has been created
+✓ Repository myorg-myapp has been created in production namespace
+
+? Select your Git provider: GitHub
+? Enter your personal access token: ****
+? Enter webhook secret (leave empty to auto-generate): 
+
+✓ Webhook configured on https://github.com/myorg/myapp
+✓ Secret git-provider-secret has been created
+
+ℹ️ Directory .tekton has been created.
+✓ A basic template has been created in .tekton/pipelinerun.yaml, feel free to customize it.
+ℹ️ You can test your pipeline by pushing the generated template to your git repository
+```
+
+## Generated Files
+
+### .tekton/pipelinerun.yaml
+
+A sample PipelineRun is created:
+
+```yaml .tekton/pipelinerun.yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: myapp-pull-request
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request, push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  pipelineSpec:
+    tasks:
+    - name: fetch-repository
+      taskRef:
+        name: git-clone
+        resolver: hub
+      workspaces:
+      - name: output
+        workspace: source
+      params:
+      - name: url
+        value: "{{ repo_url }}"
+      - name: revision
+        value: "{{ revision }}"
+    workspaces:
+    - name: source
+      emptyDir: {}
+```
+
+## Repository CRD Structure
+
+The created Repository CRD:
+
+```yaml Repository CRD
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+metadata:
+  name: myorg-myapp
+  namespace: production
+spec:
+  url: "https://github.com/myorg/myapp"
+  git_provider:
+    secret:
+      name: "git-provider-secret"
+      key: "token"
+    webhook_secret:
+      name: "webhook-secret"
+      key: "webhook-secret"
+```
+
+## Webhook Configuration
+
+### GitHub App (No Configuration Needed)
+
+If a GitHub App is configured, webhooks are handled automatically:
+
+```bash
+✓ Repository myorg-myapp has been created in production namespace
+✓ A basic template has been created in .tekton/pipelinerun.yaml
+```
+
+### Manual Webhook Setup
+
+For other providers or GitHub webhook mode:
+
+1. **Token**: Personal access token or API key
+2. **Webhook Secret**: Shared secret for webhook validation
+3. **Webhook URL**: Automatically configured on Git provider
+
+## Provider-Specific Configuration
+
+### GitHub
+
+Required token scopes:
+- `repo` - Full control of repositories
+- `admin:repo_hook` - Manage webhooks
+
+### GitLab
+
+Required token scopes:
+- `api` - Full API access
+- `read_repository` - Read repository
+
+### Bitbucket Cloud
+
+Required:
+- App password with `repository:write` and `webhook` permissions
+
+### Bitbucket Server
+
+Required:
+- Personal access token with `REPO_ADMIN` permission
+
+## Auto-Detection Features
+
+### Git URL Detection
+
+When run from a Git repository:
+
+```bash
+cd ~/projects/myapp
+tkn pac create repo
+# Auto-detects: https://github.com/myorg/myapp
+```
+
+### Namespace Suggestion
+
+Default namespace based on current context or repository name:
+
+```
+Current namespace: default
+Suggested namespace: myapp-pipelines
+```
+
+### Repository Name Generation
+
+Auto-generated from Git URL:
+
+```
+URL: https://github.com/myorg/myapp
+Name: myorg-myapp
+```
+
+## Common Workflows
+
+### Create and Push
+
+```bash
+# Create repository
+tkn pac create repo --url https://github.com/myorg/myapp
+
+# Customize the generated PipelineRun
+vim .tekton/pipelinerun.yaml
+
+# Commit and push
+git add .tekton/
+git commit -m "Add Pipelines-as-Code configuration"
+git push
+
+# Create a pull request to test
+gh pr create --title "Test PAC" --body "Testing Pipelines-as-Code"
+```
+
+### Multiple Repositories
+
+```bash
+# Create multiple repositories in the same namespace
+tkn pac create repo --url https://github.com/myorg/api --namespace shared-pipelines
+tkn pac create repo --url https://github.com/myorg/ui --namespace shared-pipelines
+tkn pac create repo --url https://github.com/myorg/docs --namespace shared-pipelines
+```
+
+### Different Namespaces per Environment
+
+```bash
+# Development
+tkn pac create repo --url https://github.com/myorg/myapp --namespace dev-pipelines
+
+# Staging
+tkn pac create repo --url https://github.com/myorg/myapp --namespace staging-pipelines
+
+# Production
+tkn pac create repo --url https://github.com/myorg/myapp --namespace prod-pipelines
+```
+
+## Troubleshooting
+
+### Namespace Already Exists
+
+If the namespace exists but you don't have access:
+
+```
+Error: namespaces "production" is forbidden
+```
+
+**Solution**: Request access or use a different namespace.
+
+### Invalid Git URL
+
+```
+Error: invalid git URL: not-a-valid-url
+```
+
+**Solution**: Provide a valid HTTPS Git URL:
+
+```bash
+tkn pac create repo --url https://github.com/myorg/myapp
+```
+
+### Repository Already Exists
+
+```
+Error: repositories.pipelinesascode.tekton.dev "myorg-myapp" already exists
+```
+
+**Solution**: Delete the existing repository first or use a different name:
+
+```bash
+tkn pac delete repo myorg-myapp
+# or
+tkn pac create repo --name myorg-myapp-v2
+```
+
+### PAC Not Installed
+
+```
+Error: pipelines-as-code is not installed in the cluster
+```
+
+**Solution**: Run bootstrap first:
+
+```bash
+tkn pac bootstrap
+```
+
+## Related Commands
+
+- [`tkn pac list`](/cli/repository#list) - List repositories
+- [`tkn pac describe`](/cli/describe) - Describe repository details
+- [`tkn pac delete repo`](/cli/repository#delete) - Delete repositories
+- [`tkn pac generate`](/cli/generate) - Generate PipelineRun templates
+- [`tkn pac webhook`](/cli/webhook) - Manage webhooks
+
+## See Also
+
+- [Repository CRD Reference](/docs/guide/repositorycrd)
+- [Authoring PipelineRuns](/docs/guide/authoringprs)
+- [Git Provider Configuration](/docs/install/settings)

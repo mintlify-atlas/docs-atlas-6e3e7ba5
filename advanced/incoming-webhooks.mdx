@@ -1,0 +1,644 @@
+---
+title: Incoming Webhooks
+description: Trigger PipelineRuns using external webhook URLs without creating new commits
+---
+
+## Overview
+
+Incoming webhooks allow you to trigger PipelineRuns in Pipelines-as-Code using a shared secret and HTTP request, without requiring a new code iteration or Git event. This enables integration with external systems, CI/CD tools, or custom automation workflows.
+
+<Note>
+Incoming webhooks trigger PipelineRuns from your `.tekton` directory, just like Git events. The webhook specifies which branch's pipeline definitions to use.
+</Note>
+
+## How It Works
+
+1. Configure incoming webhook in your Repository CR with a secret and target branches
+2. Create PipelineRuns with `on-event: [incoming]` annotation
+3. External systems make HTTP POST requests to the PAC controller with the secret
+4. PAC validates the request and triggers matching PipelineRuns
+
+## Configuration
+
+### Repository CR Setup
+
+Define incoming webhooks in the `spec.incoming` field:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+  namespace: my-namespace
+spec:
+  url: "https://github.com/owner/repo"
+  incoming:
+    - type: webhook-url
+      targets:
+        - main
+      secret:
+        name: repo-incoming-secret
+```
+
+<ParamField path="incoming[].type" type="string" required>
+  Type of incoming webhook. Currently only `webhook-url` is supported.
+</ParamField>
+
+<ParamField path="incoming[].targets" type="array" required>
+  List of target branches that this webhook can trigger. Supports exact matches and glob patterns.
+</ParamField>
+
+<ParamField path="incoming[].secret" type="object" required>
+  Reference to a Kubernetes Secret containing the shared secret for authentication.
+  
+  <ParamField path="incoming[].secret.name" type="string" required>
+    Name of the Kubernetes Secret.
+  </ParamField>
+  
+  <ParamField path="incoming[].secret.key" type="string">
+    Key within the Secret. Defaults to `secret` if not specified.
+  </ParamField>
+</ParamField>
+
+<ParamField path="incoming[].params" type="array">
+  List of parameter names to extract from the webhook payload. These will be available in your PipelineRuns.
+</ParamField>
+
+### Secret Configuration
+
+Create a Kubernetes Secret containing the shared secret:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-incoming-secret
+  namespace: my-namespace
+type: Opaque
+stringData:
+  secret: very-secure-shared-secret
+```
+
+<Warning>
+Use a strong, randomly generated secret. This is the only authentication mechanism for incoming webhooks.
+</Warning>
+
+### PipelineRun Configuration
+
+Annotate your PipelineRun to respond to incoming webhooks:
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: deploy-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[incoming]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: deploy
+        taskSpec:
+          steps:
+            - name: deploy-app
+              image: alpine
+              script: |
+                echo "Deploying from incoming webhook"
+```
+
+## Triggering Webhooks
+
+### Required Parameters
+
+<ParamField path="repository" type="string" required>
+  Name of the Repository CR.
+</ParamField>
+
+<ParamField path="namespace" type="string">
+  Namespace containing the Repository CR. Required when the repository name is not unique across the cluster.
+</ParamField>
+
+<ParamField path="branch" type="string" required>
+  Target branch configured in the incoming webhook.
+</ParamField>
+
+<ParamField path="pipelinerun" type="string" required>
+  Name or generateName of the PipelineRun to trigger. Must match a PipelineRun definition in the `.tekton` directory.
+</ParamField>
+
+<ParamField path="secret" type="string" required>
+  The shared secret value from the Kubernetes Secret referenced in the Repository CR.
+</ParamField>
+
+<ParamField path="params" type="object">
+  JSON object containing parameter values to override in the PipelineRun context.
+</ParamField>
+
+### Making Requests
+
+<Note>
+**Recommended**: Use the POST JSON body method for security. URL query parameters are deprecated and expose secrets in logs.
+</Note>
+
+#### POST JSON Body (Recommended)
+
+```bash
+curl -H "Content-Type: application/json" \
+  -X POST "https://pac-controller.example.com/incoming" \
+  -d '{
+    "repository": "my-repo",
+    "branch": "main",
+    "pipelinerun": "deploy-pipeline",
+    "secret": "very-secure-shared-secret"
+  }'
+```
+
+#### URL Query Parameters (Deprecated)
+
+```bash
+curl -X POST 'https://pac-controller.example.com/incoming?secret=very-secure-shared-secret&repository=my-repo&branch=main&pipelinerun=deploy-pipeline'
+```
+
+<Warning>
+Passing secrets in the URL is insecure as they may be logged by proxies, load balancers, and web servers. This method will be removed in a future version.
+</Warning>
+
+## Branch Targeting with Glob Patterns
+
+The `targets` field supports both exact string matching and glob patterns:
+
+### Glob Pattern Syntax
+
+- `*` - Matches any characters (zero or more)
+- `?` - Matches exactly one character  
+- `[abc]` - Matches one character: a, b, or c
+- `[a-z]` - Matches one character in range a to z
+- `[0-9]` - Matches one digit
+- `{a,b,c}` - Matches any of the alternatives (alternation)
+
+### Examples
+
+<Accordion title="Feature Branches">
+```yaml
+incoming:
+  - targets:
+      - "feature/*"  # Matches feature/login, feature/api, etc.
+    secret:
+      name: feature-webhook-secret
+    type: webhook-url
+```
+</Accordion>
+
+<Accordion title="Semantic Versioning Tags">
+```yaml
+incoming:
+  - targets:
+      - "v[0-9]*.[0-9]*.[0-9]*"  # Matches v1.2.3, v10.20.30, etc.
+    secret:
+      name: release-webhook-secret
+    type: webhook-url
+```
+</Accordion>
+
+<Accordion title="Multiple Patterns with Alternation">
+```yaml
+incoming:
+  - targets:
+      - "{dev,test,qa}/*"  # Matches dev/*, test/*, qa/*
+      - "hotfix/[A-Z]*-[0-9]*"  # Matches JIRA-123, PROJ-456
+    secret:
+      name: multi-webhook-secret
+    type: webhook-url
+```
+</Accordion>
+
+### First-Match-Wins
+
+When multiple incoming webhook configurations match the same branch, **the first matching webhook in YAML order is used**:
+
+```yaml
+incoming:
+  # Production - checked first (most specific)
+  - targets:
+      - main
+      - "v[0-9]*.[0-9]*.[0-9]*"
+    secret:
+      name: prod-webhook-secret
+    params:
+      - prod_env
+    type: webhook-url
+  
+  # Feature branches - checked second
+  - targets:
+      - "feature/*"
+      - "bugfix/*"
+    secret:
+      name: feature-webhook-secret
+    params:
+      - dev_env
+    type: webhook-url
+  
+  # Catch-all - checked last
+  - targets:
+      - "*"  # Matches any branch not caught above
+    secret:
+      name: default-webhook-secret
+    type: webhook-url
+```
+
+<Note>
+Place production or sensitive webhooks first in the list to ensure they take precedence.
+</Note>
+
+## Passing Dynamic Parameters
+
+You can pass dynamic parameter values to override Pipelines-as-Code built-in parameters:
+
+### Repository CR Configuration
+
+List the parameters you want to accept from webhook payloads:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+spec:
+  url: "https://github.com/owner/repo"
+  incoming:
+    - targets:
+        - main
+      params:
+        - pull_request_number
+        - custom_tag
+        - deploy_env
+      secret:
+        name: repo-incoming-secret
+      type: webhook-url
+```
+
+### Sending Parameters in Webhook Request
+
+```bash
+curl -H "Content-Type: application/json" \
+  -X POST "https://pac-controller.example.com/incoming" \
+  -d '{
+    "repository": "my-repo",
+    "branch": "main",
+    "pipelinerun": "deploy-pipeline",
+    "secret": "very-secure-shared-secret",
+    "params": {
+      "pull_request_number": "12345",
+      "custom_tag": "v1.2.3",
+      "deploy_env": "staging"
+    }
+  }'
+```
+
+### Using Parameters in PipelineRun
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: deploy-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[incoming]"
+spec:
+  params:
+    - name: pr-number
+      value: "{{ pull_request_number }}"
+    - name: tag
+      value: "{{ custom_tag }}"
+  pipelineSpec:
+    params:
+      - name: pr-number
+      - name: tag
+    tasks:
+      - name: info
+        params:
+          - name: PR
+            value: $(params.pr-number)
+          - name: TAG
+            value: $(params.tag)
+        taskSpec:
+          params:
+            - name: PR
+            - name: TAG
+          steps:
+            - name: print-info
+              image: alpine
+              script: |
+                echo "Processing PR: $(params.PR)"
+                echo "Deploying tag: $(params.TAG)"
+```
+
+<Note>
+Parameters must be listed in the `params` field of the incoming webhook configuration, otherwise they will be ignored.
+</Note>
+
+## Git Provider Integration
+
+### GitHub App
+
+GitHub App authentication works automatically with incoming webhooks:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+spec:
+  url: "https://github.com/owner/repo"
+  incoming:
+    - targets:
+        - main
+      secret:
+        name: repo-incoming-secret
+      type: webhook-url
+```
+
+### GitHub Enterprise
+
+For GitHub Enterprise, include the `X-GitHub-Enterprise-Host` header:
+
+```bash
+curl -H "Content-Type: application/json" \
+  -H "X-GitHub-Enterprise-Host: github.example.com" \
+  -X POST "https://pac-controller.example.com/incoming" \
+  -d '{
+    "repository": "my-repo",
+    "branch": "main",
+    "pipelinerun": "deploy-pipeline",
+    "secret": "very-secure-shared-secret"
+  }'
+```
+
+### Webhook-Based Providers
+
+For GitLab, Bitbucket, Gitea/Forgejo, you must specify the `git_provider` section:
+
+```yaml
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: my-repo
+spec:
+  url: "https://gitlab.com/owner/repo"
+  git_provider:
+    type: gitlab
+    secret:
+      name: gitlab-token
+  incoming:
+    - targets:
+        - main
+      secret:
+        name: repo-incoming-secret
+      type: webhook-url
+```
+
+<Note>
+Supported `git_provider.type` values: `github`, `gitlab`, `bitbucket-cloud`, `bitbucket-datacenter`, `gitea`, `forgejo`
+</Note>
+
+## Status and Notifications
+
+When triggered via incoming webhook, the PipelineRun is treated as a **push event**:
+
+- Status is reported back to the Git provider
+- Check runs/commit statuses are created
+- Comments may be posted (depending on configuration)
+
+### Viewing Status
+
+Use the `tkn pac` CLI to inspect Repository status:
+
+```bash
+tkn pac describe repository my-repo -n my-namespace
+```
+
+Add a finally task to your Pipeline for custom notifications:
+
+```yaml
+finally:
+  - name: notify
+    taskSpec:
+      steps:
+        - name: send-notification
+          image: curlimages/curl
+          script: |
+            curl -X POST https://notifications.example.com/webhook \
+              -d "Pipeline {{ pipeline_name }} completed"
+```
+
+See [Statuses](/docs/guide/statuses) for more notification options.
+
+## Security Considerations
+
+<Warning>
+**Important Security Notes:**
+- Always use HTTPS for webhook endpoints
+- Generate strong, random secrets (minimum 32 characters)
+- Use different secrets for different environments
+- Rotate secrets regularly
+- Limit network access to webhook endpoints
+- Never commit secrets to Git repositories
+</Warning>
+
+### Secret Rotation
+
+To rotate secrets:
+
+1. Create a new secret with a different name:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-incoming-secret-v2
+stringData:
+  secret: new-secure-shared-secret
+```
+
+2. Update Repository CR to reference new secret:
+```yaml
+incoming:
+  - targets:
+      - main
+    secret:
+      name: repo-incoming-secret-v2
+```
+
+3. Update all webhook callers with new secret
+4. Delete old secret after migration
+
+## Use Cases
+
+<Accordion title="Manual Deployment Trigger">
+```bash
+# Trigger production deployment from ops dashboard
+curl -H "Content-Type: application/json" \
+  -X POST "https://pac.example.com/incoming" \
+  -d '{
+    "repository": "my-app",
+    "branch": "main",
+    "pipelinerun": "deploy-prod",
+    "secret": "prod-secret",
+    "params": {
+      "version": "v1.2.3",
+      "environment": "production"
+    }
+  }'
+```
+</Accordion>
+
+<Accordion title="Integration with External CI/CD">
+```bash
+# Jenkins pipeline triggering PAC
+pipeline {
+  agent any
+  stages {
+    stage('Trigger PAC') {
+      steps {
+        script {
+          sh '''
+            curl -H "Content-Type: application/json" \
+              -X POST "${PAC_URL}/incoming" \
+              -d "{
+                \"repository\": \"my-service\",
+                \"branch\": \"main\",
+                \"pipelinerun\": \"integration-test\",
+                \"secret\": \"${PAC_SECRET}\",
+                \"params\": {
+                  \"jenkins_build\": \"${BUILD_NUMBER}\"
+                }
+              }"
+          '''
+        }
+      }
+    }
+  }
+}
+```
+</Accordion>
+
+<Accordion title="Scheduled Jobs via Cron">
+```yaml
+# Kubernetes CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-build
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: trigger
+            image: curlimages/curl
+            env:
+            - name: PAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: pac-webhook-secret
+                  key: secret
+            command:
+            - /bin/sh
+            - -c
+            - |
+              curl -H "Content-Type: application/json" \
+                -X POST "https://pac.example.com/incoming" \
+                -d "{
+                  \"repository\": \"my-app\",
+                  \"branch\": \"develop\",
+                  \"pipelinerun\": \"nightly-build\",
+                  \"secret\": \"${PAC_SECRET}\",
+                  \"params\": {
+                    \"build_type\": \"nightly\"
+                  }
+                }"
+          restartPolicy: OnFailure
+```
+</Accordion>
+
+<Accordion title="Webhook Relay Service">
+```yaml
+# Receive webhooks from external service and relay to PAC
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: webhook-relay
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[incoming]"
+spec:
+  pipelineSpec:
+    params:
+      - name: external_event
+      - name: external_payload
+    tasks:
+      - name: process-and-relay
+        params:
+          - name: EVENT
+            value: $(params.external_event)
+          - name: PAYLOAD
+            value: $(params.external_payload)
+        taskSpec:
+          params:
+            - name: EVENT
+            - name: PAYLOAD
+          steps:
+            - name: relay
+              image: alpine
+              script: |
+                echo "Processing external event: $(params.EVENT)"
+                # Custom logic to process and relay
+```
+</Accordion>
+
+## Troubleshooting
+
+<Accordion title="403 Forbidden / Authentication Failed">
+  - Verify the secret value matches exactly (no trailing whitespace)
+  - Check that the Secret exists in the correct namespace
+  - Ensure the `secret.key` field matches the key in your Secret (defaults to `secret`)
+  - Verify the Repository CR name and namespace are correct
+</Accordion>
+
+<Accordion title="No PipelineRun Triggered">
+  - Confirm the branch matches one of the `targets` patterns
+  - Check that a PipelineRun with `on-event: [incoming]` exists in the `.tekton` directory
+  - Verify the PipelineRun name/generateName matches the request
+  - Check the `on-target-branch` annotation matches the branch
+</Accordion>
+
+<Accordion title="Parameters Not Available">
+  - Ensure parameters are listed in the `params` field of the incoming webhook configuration
+  - Verify the parameter names match exactly (case-sensitive)
+  - Check that you're using the JSON body method with `Content-Type: application/json`
+</Accordion>
+
+<Accordion title="Multiple PipelineRuns Triggered">
+  - This is expected if multiple PipelineRuns match the event and branch
+  - Use more specific `on-target-branch` patterns to control which runs trigger
+  - Consider using different branches or webhook configurations for different pipelines
+</Accordion>
+
+## Best Practices
+
+1. **Use Strong Secrets**: Generate cryptographically random secrets with at least 32 characters
+2. **Separate Environments**: Use different secrets for dev, staging, and production
+3. **Limit Scope**: Configure specific branch patterns rather than wildcards when possible
+4. **Monitor Usage**: Log incoming webhook requests for audit purposes
+5. **Test First**: Use a test repository to validate webhook configuration before production
+6. **Document Webhooks**: Maintain documentation of all systems that trigger webhooks
+7. **Use JSON Body**: Always use the POST JSON body method, never URL parameters
+8. **Implement Retries**: Add retry logic in webhook callers for reliability
+
+## See Also
+
+- [Custom Parameters](/docs/advanced/custom-parameters) - Using dynamic parameters
+- [Authoring PipelineRuns](/docs/guide/authoringprs) - PipelineRun configuration
+- [Repository CRD](/docs/guide/repositorycrd) - Complete Repository CR reference
+- [Statuses](/docs/guide/statuses) - Status reporting and notifications

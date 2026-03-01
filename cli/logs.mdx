@@ -1,0 +1,392 @@
+---
+title: tkn pac logs
+description: Show PipelineRun logs from a Pipelines-as-Code Repository
+---
+
+# tkn pac logs
+
+Display PipelineRun logs from a Pipelines-as-Code Repository.
+
+## Synopsis
+
+```bash
+tkn pac logs [repository-name] [flags]
+```
+
+## Description
+
+The `logs` command shows logs for PipelineRuns belonging to a Repository CRD. It:
+
+1. **Selects a repository** (prompts if not specified)
+2. **Lists PipelineRuns** attached to that repository
+3. **Selects a PipelineRun** (prompts if multiple exist)
+4. **Shows logs** using `tkn` CLI or opens console/dashboard
+
+<Note>
+  The `tkn` CLI must be installed to show logs in the terminal.
+</Note>
+
+## Prerequisites
+
+- **[Tekton CLI (tkn)](https://github.com/tektoncd/cli)** installed and in `PATH`
+- Or use `--web` flag to open logs in browser
+
+## Usage Examples
+
+<CodeGroup>
+
+```bash Interactive
+# Select repository and PipelineRun interactively
+tkn pac logs
+```
+
+```bash Specify Repository
+# Show logs for specific repository
+tkn pac logs myorg-app
+```
+
+```bash Latest PipelineRun
+# Show logs from the most recent PipelineRun
+tkn pac logs myorg-app --last
+```
+
+```bash Open in Browser
+# Open logs in console/dashboard
+tkn pac logs myorg-app --web
+```
+
+```bash Specific Namespace
+# Logs from specific namespace
+tkn pac logs myorg-app -n production
+```
+
+```bash Custom tkn Path
+# Use tkn from custom location
+tkn pac logs myorg-app --tkn-path /opt/bin/tkn
+```
+
+```bash Limit PipelineRuns
+# Show only last 5 PipelineRuns
+tkn pac logs myorg-app --limit 5
+```
+
+</CodeGroup>
+
+## Arguments
+
+<ParamField path="repository-name" type="string">
+  Repository name (optional - prompts if not provided)
+</ParamField>
+
+## Flags
+
+<ParamField path="-n, --namespace" type="string">
+  Namespace containing the repository
+</ParamField>
+
+<ParamField path="-L, --last" type="boolean" default="false">
+  Show logs of the last PipelineRun (skip selection prompt)
+</ParamField>
+
+<ParamField path="-w, --web" type="boolean" default="false">
+  Open web browser to console/dashboard instead of using tkn
+</ParamField>
+
+<ParamField path="--limit" type="int" default="-1">
+  Limit the number of PipelineRuns to show (-1 for unlimited)
+</ParamField>
+
+<ParamField path="--tkn-path" type="string">
+  Path to the tkn binary (auto-detected if not specified)
+</ParamField>
+
+## Interactive Flow
+
+### 1. Repository Selection
+
+If repository name not provided:
+
+```
+? Select a repository:
+  › myorg-api
+    myorg-frontend
+    myorg-docs
+```
+
+### 2. PipelineRun Selection
+
+If multiple PipelineRuns exist and `--last` not specified:
+
+```
+? Select a PipelineRun:
+  › myorg-api-pr-123 running since 2m ago
+    myorg-api-pr-122 completed 10m ago
+    myorg-api-pr-121 completed 1h ago
+    myorg-api-pr-120 completed 2h ago
+```
+
+### 3. Logs Display
+
+Logs are streamed in real-time:
+
+```bash
+$ tkn pac logs myorg-app
+
+[fetch-repository : clone] Cloning into '/workspace/output'...
+[fetch-repository : clone] From https://github.com/myorg/app
+[fetch-repository : clone]  * branch            main       -> FETCH_HEAD
+[fetch-repository : clone] Switched to branch 'main'
+
+[run-tests : test] Running tests...
+[run-tests : test] === RUN   TestMain
+[run-tests : test] === RUN   TestHandler
+[run-tests : test] --- PASS: TestHandler (0.00s)
+[run-tests : test] PASS
+[run-tests : test] ok      github.com/myorg/app    0.123s
+
+[build-image : build] STEP 1/5: FROM golang:1.21
+[build-image : build] STEP 2/5: WORKDIR /app
+[build-image : build] --> Using cache
+...
+```
+
+## Output Examples
+
+### Terminal Output (tkn CLI)
+
+```bash
+$ tkn pac logs myorg-api
+
+? Select a PipelineRun: myorg-api-pr-123 running since 2m ago
+
+[fetch-repository : clone] + git clone https://github.com/myorg/api /workspace/output
+[fetch-repository : clone] Cloning into '/workspace/output'...
+[fetch-repository : clone] remote: Enumerating objects: 1234, done.
+[fetch-repository : clone] remote: Counting objects: 100% (1234/1234), done.
+[fetch-repository : clone] Receiving objects: 100% (1234/1234), 5.67 MiB | 12.34 MiB/s, done.
+
+[run-tests : test] + go test ./...
+[run-tests : test] ok      github.com/myorg/api/pkg/handlers  0.123s
+[run-tests : test] ok      github.com/myorg/api/pkg/models    0.089s
+...
+```
+
+### Browser Output (--web)
+
+Opens the console or Tekton Dashboard in your default browser:
+
+```bash
+$ tkn pac logs myorg-api --web
+
+Opening: https://console.apps.cluster.example.com/k8s/ns/production/tekton.dev~v1~PipelineRun/myorg-api-pr-123
+```
+
+## Web Console Integration
+
+The `--web` flag opens logs in:
+
+**OpenShift:**
+- Auto-detects OpenShift Console
+- Opens PipelineRun detail page
+
+**Kubernetes with Tekton Dashboard:**
+- Detects Tekton Dashboard
+- Opens PipelineRun logs page
+
+### Environment Variables
+
+<ParamField path="PAC_TEKTON_DASHBOARD_URL" type="string">
+  Override Tekton Dashboard URL
+  
+  Example:
+  ```bash
+  export PAC_TEKTON_DASHBOARD_URL=https://dashboard.example.com
+  tkn pac logs --web
+  ```
+</ParamField>
+
+## Common Workflows
+
+### View Latest Logs
+
+```bash
+# Quickly check the most recent run
+tkn pac logs myorg-app --last
+```
+
+### Follow Running Pipeline
+
+```bash
+# Stream logs in real-time
+tkn pac logs myorg-app
+# Select the running PipelineRun
+```
+
+### Debug Failed Run
+
+```bash
+# View logs of failed PipelineRun
+tkn pac logs myorg-app
+# Select the failed run from the list
+```
+
+### Open in Dashboard
+
+```bash
+# View in Tekton Dashboard for better UI
+tkn pac logs myorg-app --last --web
+```
+
+### Multiple Repositories
+
+```bash
+# Check logs across repositories
+tkn pac logs api-repo --last
+tkn pac logs frontend-repo --last
+tkn pac logs docs-repo --last
+```
+
+## Limiting PipelineRuns
+
+Control how many PipelineRuns are shown:
+
+<CodeGroup>
+
+```bash Last 5 Runs
+tkn pac logs myorg-app --limit 5
+```
+
+```bash Last 10 Runs
+tkn pac logs myorg-app --limit 10
+```
+
+```bash Unlimited
+tkn pac logs myorg-app --limit -1
+```
+
+</CodeGroup>
+
+## PipelineRun Status Display
+
+The selection list shows status for each PipelineRun:
+
+```
+? Select a PipelineRun:
+  › myorg-api-pr-123 running since 2m ago        ← Currently executing
+    myorg-api-pr-122 completed 10m ago             ← Finished 10m ago
+    myorg-api-pr-121 completed 1h ago
+    myorg-api-pr-120 completed 2h ago
+```
+
+- **running since** - Currently executing
+- **completed** - Finished execution
+
+## tkn CLI Detection
+
+The command automatically finds `tkn` in your PATH:
+
+```bash
+$ which tkn
+/usr/local/bin/tkn
+```
+
+If `tkn` is not found:
+
+```
+Error: cannot find tkn binary in Path
+```
+
+**Solution**: Install tkn or specify path:
+
+```bash
+tkn pac logs --tkn-path /custom/path/to/tkn
+```
+
+## Troubleshooting
+
+### tkn Not Found
+
+```
+Error: cannot find tkn binary in Path
+```
+
+**Solutions:**
+
+1. Install tkn:
+   ```bash
+   # macOS
+   brew install tektoncd-cli
+   
+   # Linux
+   curl -LO https://github.com/tektoncd/cli/releases/latest/download/tkn_Linux_x86_64.tar.gz
+   tar xvzf tkn_Linux_x86_64.tar.gz -C /usr/local/bin/ tkn
+   ```
+
+2. Use web browser instead:
+   ```bash
+   tkn pac logs --web
+   ```
+
+3. Specify tkn path:
+   ```bash
+   tkn pac logs --tkn-path /opt/bin/tkn
+   ```
+
+### No PipelineRuns Found
+
+```
+Error: cannot detect pipelineruns belonging to repository: myorg-app
+```
+
+**Solutions:**
+- Check repository exists: `tkn pac list`
+- Verify PipelineRuns: `kubectl get pr -l pipelinesascode.tekton.dev/repository=myorg-app`
+- Ensure pipeline has run at least once
+
+### Repository Not Found
+
+```
+Error: repositories.pipelinesascode.tekton.dev "myorg-app" not found
+```
+
+**Solutions:**
+- List available repositories: `tkn pac list`
+- Check namespace: `tkn pac list -A`
+- Verify repository name spelling
+
+### Console URL Not Detected
+
+When using `--web`:
+
+```bash
+# Set dashboard URL explicitly
+export PAC_TEKTON_DASHBOARD_URL=https://dashboard.example.com
+tkn pac logs --web
+```
+
+Or:
+
+```bash
+export TEKTON_DASHBOARD_URL=https://dashboard.example.com
+tkn pac logs --web
+```
+
+### Permission Denied
+
+```
+Error: pipelineruns.tekton.dev is forbidden
+```
+
+Solution: Request RBAC permissions to list PipelineRuns in the namespace.
+
+## Related Commands
+
+- [`tkn pac describe`](/cli/describe) - Describe repository and show run details
+- [`tkn pac list`](/cli/repository#list) - List repositories with status
+- [`tkn pr logs`](https://github.com/tektoncd/cli) - Direct Tekton CLI for PipelineRun logs
+
+## See Also
+
+- [Tekton CLI Documentation](https://github.com/tektoncd/cli)
+- [Tekton Dashboard](https://github.com/tektoncd/dashboard)
+- [PipelineRun Status](/docs/guide/statuses)

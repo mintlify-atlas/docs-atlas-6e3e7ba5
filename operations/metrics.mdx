@@ -1,0 +1,426 @@
+---
+title: Metrics and Monitoring
+description: Monitor Pipelines as Code with Prometheus metrics and observability tools
+---
+
+Pipelines as Code exposes Prometheus metrics for monitoring controller performance, PipelineRun execution, and Git provider API usage. These metrics help you understand system behavior, identify bottlenecks, and set up alerting.
+
+## Accessing Metrics
+
+Metrics are exposed by the `pipelines-as-code-watcher` service on port `9090`:
+
+```bash
+# Port-forward to access metrics locally
+kubectl port-forward -n pipelines-as-code svc/pipelines-as-code-watcher 9090:9090
+
+# Access metrics endpoint
+curl http://localhost:9090/metrics
+```
+
+## Configuring Exporters
+
+Pipelines as Code supports multiple metrics backends including Prometheus, Google Stackdriver, and other exporters. Configuration is managed through the `pipelines-as-code-config-observability` ConfigMap.
+
+### Observability ConfigMap
+
+```bash
+kubectl get configmap pipelines-as-code-config-observability -n pipelines-as-code -o yaml
+```
+
+### Example Configuration
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipelines-as-code-config-observability
+  namespace: pipelines-as-code
+data:
+  # Prometheus (default)
+  metrics.backend-destination: prometheus
+  
+  # For Stackdriver (Google Cloud)
+  # metrics.backend-destination: stackdriver
+  # metrics.stackdriver-project-id: "your-gcp-project-id"
+  # metrics.allow-stackdriver-custom-metrics: "false"
+```
+
+<ParamField path="metrics.backend-destination" type="string" default="prometheus">
+  The metrics backend to use. Supported values:
+  - `prometheus` - Prometheus format (default)
+  - `stackdriver` - Google Cloud Stackdriver
+</ParamField>
+
+<ParamField path="metrics.stackdriver-project-id" type="string">
+  Google Cloud project ID for Stackdriver. When running on GCE, this is optional and defaults to the cluster's project.
+</ParamField>
+
+<ParamField path="metrics.allow-stackdriver-custom-metrics" type="boolean" default="false">
+  Allow sending metrics to Stackdriver using "global" resource type and custom metric type. Enabling this may incur additional charges.
+</ParamField>
+
+## Available Metrics
+
+Pipelines as Code exports the following metrics:
+
+### Git Provider API Requests
+
+<ParamField path="pipelines_as_code_git_provider_api_request_count" type="Counter">
+  Total number of API requests made to Git providers (GitHub, GitLab, Bitbucket).
+  
+  **Labels:**
+  - `provider` - Git provider name (github, gitlab, bitbucket-cloud, etc.)
+  - `event-type` - Event type triggering the request (pull_request, push, etc.)
+  - `namespace` - PipelineRun namespace
+  - `repository` - Repository CR name
+</ParamField>
+
+<Note>
+  This metric is emitted by **both** the Controller and Watcher services. When analyzing, combine metrics from both sources using PromQL aggregation.
+</Note>
+
+**Example PromQL queries:**
+
+```promql
+# Total API requests across both services
+sum(
+  pac_controller_pipelines_as_code_git_provider_api_request_count
+  or
+  pac_watcher_pipelines_as_code_git_provider_api_request_count
+)
+
+# API request rate per minute
+sum(
+  rate(pac_controller_pipelines_as_code_git_provider_api_request_count[1m])
+  or
+  rate(pac_watcher_pipelines_as_code_git_provider_api_request_count[1m])
+)
+
+# API requests by provider
+sum by (provider) (
+  pac_controller_pipelines_as_code_git_provider_api_request_count
+  or
+  pac_watcher_pipelines_as_code_git_provider_api_request_count
+)
+```
+
+### PipelineRun Count
+
+<ParamField path="pipelines_as_code_pipelinerun_count" type="Counter">
+  Total number of PipelineRuns created by Pipelines as Code.
+  
+  **Labels:**
+  - `provider` - Git provider name
+  - `event-type` - Event type (pull_request, push, incoming)
+  - `namespace` - PipelineRun namespace
+  - `repository` - Repository CR name
+</ParamField>
+
+**Example PromQL queries:**
+
+```promql
+# Total PipelineRuns created
+sum(pipelines_as_code_pipelinerun_count)
+
+# PipelineRuns by event type
+sum by (event_type) (pipelines_as_code_pipelinerun_count)
+
+# PipelineRun creation rate
+rate(pipelines_as_code_pipelinerun_count[5m])
+
+# PipelineRuns per repository
+sum by (repository, namespace) (pipelines_as_code_pipelinerun_count)
+```
+
+### PipelineRun Duration
+
+<ParamField path="pipelines_as_code_pipelinerun_duration_seconds_sum" type="Counter">
+  Total number of seconds all PipelineRuns have taken to complete.
+  
+  **Labels:**
+  - `namespace` - PipelineRun namespace
+  - `repository` - Repository CR name
+  - `status` - PipelineRun status (Succeeded, Failed, etc.)
+  - `reason` - Status reason (Completed, TaskRunFailed, etc.)
+</ParamField>
+
+**Example PromQL queries:**
+
+```promql
+# Average PipelineRun duration
+rate(pipelines_as_code_pipelinerun_duration_seconds_sum[5m])
+  /
+rate(pipelines_as_code_pipelinerun_count[5m])
+
+# Failed PipelineRun duration
+sum by (repository) (
+  pipelines_as_code_pipelinerun_duration_seconds_sum{status="Failed"}
+)
+
+# Success rate by repository
+sum by (repository) (pipelines_as_code_pipelinerun_count{status="Succeeded"})
+  /
+sum by (repository) (pipelines_as_code_pipelinerun_count)
+```
+
+### Running PipelineRuns
+
+<ParamField path="pipelines_as_code_running_pipelineruns_count" type="Gauge">
+  Current number of running PipelineRuns.
+  
+  **Labels:**
+  - `namespace` - PipelineRun namespace
+  - `repository` - Repository CR name
+</ParamField>
+
+**Example PromQL queries:**
+
+```promql
+# Current running PipelineRuns
+sum(pipelines_as_code_running_pipelineruns_count)
+
+# Running PipelineRuns per namespace
+sum by (namespace) (pipelines_as_code_running_pipelineruns_count)
+
+# Maximum concurrent PipelineRuns (over 1 hour)
+max_over_time(pipelines_as_code_running_pipelineruns_count[1h])
+```
+
+## Prometheus ServiceMonitor
+
+To scrape metrics with Prometheus Operator, create a ServiceMonitor:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: pipelines-as-code-watcher
+  namespace: pipelines-as-code
+  labels:
+    app: pipelines-as-code
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: watcher
+      app.kubernetes.io/part-of: pipelines-as-code
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+```
+
+Apply the ServiceMonitor:
+
+```bash
+kubectl apply -f servicemonitor.yaml
+```
+
+## Grafana Dashboard
+
+Create a Grafana dashboard to visualize Pipelines as Code metrics:
+
+### Example Dashboard Panels
+
+**PipelineRun Creation Rate:**
+
+```promql
+sum(rate(pipelines_as_code_pipelinerun_count[5m])) by (event_type)
+```
+
+**Average PipelineRun Duration:**
+
+```promql
+rate(pipelines_as_code_pipelinerun_duration_seconds_sum[5m])
+  /
+rate(pipelines_as_code_pipelinerun_count[5m])
+```
+
+**Success Rate:**
+
+```promql
+sum(rate(pipelines_as_code_pipelinerun_count{status="Succeeded"}[5m]))
+  /
+sum(rate(pipelines_as_code_pipelinerun_count[5m]))
+  * 100
+```
+
+**API Request Rate by Provider:**
+
+```promql
+sum by (provider) (
+  rate(pac_controller_pipelines_as_code_git_provider_api_request_count[1m])
+  or
+  rate(pac_watcher_pipelines_as_code_git_provider_api_request_count[1m])
+)
+```
+
+**Currently Running PipelineRuns:**
+
+```promql
+sum(pipelines_as_code_running_pipelineruns_count)
+```
+
+## Alerting Rules
+
+Set up Prometheus alerts for critical conditions:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pipelines-as-code-alerts
+  namespace: pipelines-as-code
+spec:
+  groups:
+    - name: pipelines-as-code
+      interval: 30s
+      rules:
+        # High failure rate
+        - alert: HighPipelineRunFailureRate
+          expr: |
+            sum(rate(pipelines_as_code_pipelinerun_count{status="Failed"}[5m]))
+              /
+            sum(rate(pipelines_as_code_pipelinerun_count[5m]))
+              > 0.2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High PipelineRun failure rate"
+            description: "More than 20% of PipelineRuns are failing (current: {{ $value | humanizePercentage }})"
+        
+        # Too many concurrent runs
+        - alert: HighConcurrentPipelineRuns
+          expr: |
+            sum(pipelines_as_code_running_pipelineruns_count) > 50
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High number of concurrent PipelineRuns"
+            description: "Currently {{ $value }} PipelineRuns are running concurrently"
+        
+        # High API usage
+        - alert: HighGitProviderAPIUsage
+          expr: |
+            sum(
+              rate(pac_controller_pipelines_as_code_git_provider_api_request_count[1m])
+              or
+              rate(pac_watcher_pipelines_as_code_git_provider_api_request_count[1m])
+            ) > 100
+          for: 5m
+          labels:
+            severity: info
+          annotations:
+            summary: "High Git provider API usage"
+            description: "API request rate is {{ $value | humanize }} requests/second"
+        
+        # No PipelineRuns created recently
+        - alert: NoPipelineRunsCreated
+          expr: |
+            rate(pipelines_as_code_pipelinerun_count[30m]) == 0
+          for: 1h
+          labels:
+            severity: info
+          annotations:
+            summary: "No PipelineRuns created recently"
+            description: "No PipelineRuns have been created in the last hour"
+```
+
+Apply the alerts:
+
+```bash
+kubectl apply -f prometheus-rules.yaml
+```
+
+## Metrics Cardinality
+
+Be aware of metrics cardinality when you have many repositories:
+
+<Warning>
+  Metrics with `namespace` and `repository` labels create a unique time series for each repository. With hundreds of repositories, this can significantly increase Prometheus storage requirements.
+</Warning>
+
+### Managing High Cardinality
+
+1. **Adjust retention period** - Reduce Prometheus retention for high-cardinality metrics
+2. **Use recording rules** - Pre-aggregate metrics to reduce query load
+3. **Filter by namespace** - Query specific namespaces instead of all metrics
+
+**Example recording rule:**
+
+```yaml
+groups:
+  - name: pipelines-as-code-aggregates
+    interval: 60s
+    rules:
+      # Aggregate API requests by provider only
+      - record: pac:api_requests:rate1m
+        expr: |
+          sum by (provider) (
+            rate(pac_controller_pipelines_as_code_git_provider_api_request_count[1m])
+            or
+            rate(pac_watcher_pipelines_as_code_git_provider_api_request_count[1m])
+          )
+      
+      # Aggregate PipelineRun count by status
+      - record: pac:pipelineruns:total
+        expr: |
+          sum by (status) (pipelines_as_code_pipelinerun_count)
+```
+
+## Troubleshooting Metrics
+
+### Metrics Not Available
+
+Verify the watcher service is running:
+
+```bash
+kubectl get svc pipelines-as-code-watcher -n pipelines-as-code
+kubectl get pods -n pipelines-as-code -l app.kubernetes.io/name=watcher
+```
+
+Check if metrics endpoint is accessible:
+
+```bash
+kubectl port-forward -n pipelines-as-code svc/pipelines-as-code-watcher 9090:9090
+curl http://localhost:9090/metrics | grep pipelines_as_code
+```
+
+### Missing Controller Metrics
+
+Remember that `pipelines_as_code_git_provider_api_request_count` is emitted by both controller and watcher. Check both sources:
+
+```bash
+# Query both services
+kubectl port-forward -n pipelines-as-code svc/pipelines-as-code-watcher 9090:9090 &
+curl http://localhost:9090/metrics | grep git_provider_api_request_count
+
+# If available, also check controller directly
+kubectl port-forward -n pipelines-as-code deployment/pipelines-as-code-controller 8080:8080 &
+curl http://localhost:8080/metrics | grep git_provider_api_request_count
+```
+
+### Prometheus Not Scraping
+
+Verify Prometheus can reach the watcher:
+
+```bash
+# Check Prometheus targets
+kubectl port-forward -n monitoring svc/prometheus-k8s 9090:9090
+# Open http://localhost:9090/targets and search for pipelines-as-code
+```
+
+Check ServiceMonitor is created and matches the service:
+
+```bash
+kubectl get servicemonitor -n pipelines-as-code
+kubectl get svc pipelines-as-code-watcher -n pipelines-as-code -o yaml
+```
+
+## See Also
+
+- [Logging Configuration](/operations/logging) - Configure log levels and debugging
+- [Configuration](/operations/configuration) - Main ConfigMap settings
+- [Prometheus Documentation](https://prometheus.io/docs/) - Prometheus setup and PromQL
+- [Grafana Documentation](https://grafana.com/docs/) - Dashboard creation

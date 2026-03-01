@@ -1,0 +1,547 @@
+---
+title: Release Process
+description: How to create and publish a new Pipelines as Code release
+---
+
+This guide documents the release process for Pipelines as Code, including prerequisites, steps, and post-release tasks.
+
+<Warning>
+This process requires maintainer access to the repository and should only be performed by designated release managers.
+</Warning>
+
+## Release Types
+
+PAC follows [Semantic Versioning](https://semver.org/):
+
+- **Major release** (v2.0.0): Breaking changes, major new features
+- **Minor release** (v0.24.0): New features, non-breaking changes
+- **Patch release** (v0.23.1): Bug fixes, security patches
+
+## Prerequisites
+
+Before starting a release:
+
+<Steps>
+
+<Step title="Check CI status">
+Ensure all CI checks are passing on `main` branch:
+
+```bash
+# View recent CI status
+gh run list --branch main --limit 5
+```
+
+Verify:
+- Unit tests passing
+- E2E tests passing for all providers
+- Linting checks passing
+- No failing workflows
+</Step>
+
+<Step title="Verify PAC CI cluster">
+The PAC CI cluster must be operational:
+
+```bash
+# Check cluster connectivity
+kubectl get pods -n pipelines-as-code-ci
+```
+
+The release pipeline runs on this cluster.
+</Step>
+
+<Step title="Clear pending PRs">
+Review and merge or defer any pending pull requests:
+
+```bash
+# List open PRs
+gh pr list --state open
+```
+
+Consider:
+- Critical bug fixes to include
+- Features ready for release
+- Breaking changes requiring major version bump
+</Step>
+
+<Step title="Set up GPG signing">
+Ensure you have GPG signing configured for commits:
+
+```bash
+# Verify GPG setup
+git config --get user.signingkey
+
+# Test signing
+git commit --allow-empty -S -m "test signing"
+git log --show-signature -1
+```
+
+See [GitHub's GPG guide](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification) for setup instructions.
+</Step>
+
+<Step title="Update local repository">
+Ensure your local `main` branch is up to date:
+
+```bash
+# Fetch all tags and commits
+git fetch -a origin
+git checkout main
+git pull --rebase origin main
+```
+</Step>
+
+</Steps>
+
+## Choosing the Version Number
+
+Determine the next version based on changes since the last release:
+
+<Tabs>
+  <Tab title="Patch Release">
+  **When to use**: Bug fixes only, no new features
+  
+  **Example**: v0.23.0 → v0.23.1
+  
+  **Criteria**:
+  - Only bug fixes merged
+  - No new features or APIs
+  - No breaking changes
+  - Security patches
+  </Tab>
+  
+  <Tab title="Minor Release">
+  **When to use**: New features, backward-compatible changes
+  
+  **Example**: v0.23.1 → v0.24.0
+  
+  **Criteria**:
+  - New features or enhancements
+  - Backward-compatible API changes
+  - New annotations or parameters
+  - Provider support improvements
+  </Tab>
+  
+  <Tab title="Major Release">
+  **When to use**: Breaking changes, major architectural changes
+  
+  **Example**: v0.24.0 → v1.0.0
+  
+  **Criteria**:
+  - Breaking API changes
+  - Removed deprecated features
+  - Major architectural refactoring
+  - Incompatible configuration changes
+  </Tab>
+</Tabs>
+
+## Release Process
+
+<Steps>
+
+<Step title="Create the release tag">
+Tag the release locally with GPG signing:
+
+```bash
+# For release v0.24.0
+git tag -s v0.24.0 -m "Release v0.24.0"
+
+# Verify the tag
+git tag -v v0.24.0
+```
+
+<Note>
+The tag name must start with `v` (e.g., `v0.24.0`, not `0.24.0`).
+</Note>
+</Step>
+
+<Step title="Push the tag to trigger release">
+Push the tag directly to the repository (not your fork):
+
+```bash
+# Push without pre-commit hooks
+git push --no-verify git@github.com:openshift-pipelines/pipelines-as-code.git refs/tags/v0.24.0
+```
+
+<Warning>
+Double-check the tag name before pushing. Once pushed, it triggers the release pipeline.
+</Warning>
+</Step>
+
+<Step title="Monitor the release pipeline">
+Watch the release pipeline execution on the PAC CI cluster:
+
+```bash
+# Follow the release PipelineRun
+tkn pr logs -n pipelines-as-code-ci -Lf
+```
+
+The pipeline:
+- Builds binaries for all platforms
+- Creates container images for amd64 and arm64
+- Publishes to GitHub Container Registry
+- Generates release artifacts
+- Creates a draft GitHub release
+
+**Duration**: Typically 15-30 minutes (gorelease takes time)
+</Step>
+
+<Step title="Verify release artifacts">
+Once the pipeline completes, verify the draft release:
+
+```bash
+# Open releases page
+gh release list
+gh release view v0.24.0 --web
+```
+
+Check for:
+- Release YAML files
+- Binary downloads (Linux, macOS, Windows)
+- Container image tags
+- Release notes (auto-generated)
+</Step>
+
+</Steps>
+
+## Editing the Release Notes
+
+The release is created as a **draft** with auto-generated notes. You need to edit it before publishing:
+
+<Steps>
+
+<Step title="Review auto-generated notes">
+GitHub generates release notes from PR titles and labels:
+
+```bash
+gh release view v0.24.0
+```
+</Step>
+
+<Step title="Edit the release description">
+Add a human-written summary highlighting:
+
+- Major features or improvements
+- Important bug fixes
+- Breaking changes (if any)
+- Upgrade notes or migration steps
+- Thank you to contributors
+
+**Example format**:
+```markdown
+## 🎉 Highlights
+
+- Added support for Forgejo as a Git provider (Tech Preview)
+- Improved concurrency handling with better queue management
+- Enhanced GitHub Checks with error annotations
+
+## 🐛 Bug Fixes
+
+- Fixed race condition in PipelineRun cleanup
+- Resolved webhook signature validation for Bitbucket Cloud
+
+## 📚 Documentation
+
+- Updated installation guide with Helm charts
+- Added troubleshooting guide for common issues
+
+## 👏 Contributors
+
+Thank you to all contributors who made this release possible!
+
+## Full Changelog
+
+https://github.com/openshift-pipelines/pipelines-as-code/compare/v0.23.0...v0.24.0
+```
+</Step>
+
+<Step title="Categorize changes">
+Organize changes into logical categories:
+
+- **Features**: New functionality
+- **Enhancements**: Improvements to existing features
+- **Bug Fixes**: Fixed issues
+- **Documentation**: Docs improvements
+- **Dependencies**: Dependency updates
+- **Internal**: Refactoring, testing improvements
+
+<Warning>
+AI-generated summaries may:
+- Include emojis excessively (keep it professional)
+- Miscategorize internal changes as major features
+- Contain inaccuracies (always verify)
+</Warning>
+</Step>
+
+<Step title="Add upgrade notes">
+If there are breaking changes or important upgrade steps:
+
+```markdown
+## ⚠️ Upgrade Notes
+
+### Breaking Changes
+
+- The `pipelinesascode.tekton.dev/foo` annotation has been renamed to `pipelinesascode.tekton.dev/bar`
+- Update your `.tekton/` files accordingly
+
+### Deprecations
+
+- The `old-parameter` is deprecated and will be removed in v0.26.0
+- Use `new-parameter` instead
+
+### Migration Steps
+
+1. Update PAC controller: `kubectl apply -f https://github.com/.../release.yaml`
+2. Update Repository CRDs if using custom fields
+3. Test with a small repository before rolling out
+```
+</Step>
+
+</Steps>
+
+## Publishing the Release
+
+<Steps>
+
+<Step title="Publish the release">
+Once you're satisfied with the release notes:
+
+```bash
+# Publish the release (removes draft status)
+gh release edit v0.24.0 --draft=false
+```
+
+This makes the release public and triggers:
+- GitHub notifications to watchers
+- Container image publication
+- Documentation rebuild
+</Step>
+
+<Step title="Verify documentation update">
+The documentation site auto-rebuilds on CloudFlare Pages:
+
+- Stable docs: https://pipelinesascode.com
+- Version dropdown should include new version
+
+Verify after 5-10 minutes.
+</Step>
+
+<Step title="Update Homebrew formula (if needed)">
+For major releases, the Homebrew formula may need updating.
+
+The formula is at:
+https://github.com/openshift-pipelines/homebrew-pipelines-as-code
+
+The tap auto-updates, but verify:
+```bash
+brew update
+brew info openshift-pipelines/pipelines-as-code/tkn-pac
+```
+</Step>
+
+</Steps>
+
+## Post-Release Tasks
+
+<Steps>
+
+<Step title="Announce the release">
+Share the release on communication channels:
+
+**Slack**:
+- Upstream: [#pipelinesascode](https://tektoncd.slack.com/archives/C04URDDJ9MZ) on TektonCD Slack
+- Downstream: Red Hat internal channels (if applicable)
+
+**Social Media**:
+- Twitter/X (if applicable)
+- LinkedIn
+- Company blog
+
+**Example announcement**:
+```
+🎉 Pipelines as Code v0.24.0 is now available!
+
+Highlights:
+• Forgejo support (Tech Preview)
+• Improved concurrency handling
+• Enhanced GitHub Checks
+
+Release notes: https://github.com/openshift-pipelines/pipelines-as-code/releases/tag/v0.24.0
+
+Docs: https://pipelinesascode.com
+```
+</Step>
+
+<Step title="Monitor for issues">
+Watch for bug reports related to the new release:
+
+```bash
+# Monitor new issues
+gh issue list --label bug --state open
+```
+
+Be prepared to:
+- Quickly fix critical bugs
+- Create patch release if needed
+- Update documentation if unclear
+</Step>
+
+<Step title="Update milestones">
+Close the release milestone and create the next one:
+
+```bash
+# Close current milestone
+gh api repos/:owner/:repo/milestones/:milestone_number -X PATCH -f state=closed
+
+# Create next milestone
+gh api repos/:owner/:repo/milestones -f title="v0.25.0" -f description="Next release"
+```
+</Step>
+
+</Steps>
+
+## Handling Release Issues
+
+### Re-running a Failed Release
+
+If the release pipeline fails:
+
+<Steps>
+
+<Step title="Identify the failure">
+Check the PipelineRun logs:
+
+```bash
+tkn pr logs -n pipelines-as-code-ci -Lf
+```
+
+Common issues:
+- GitHub token expired
+- Network connectivity issues
+- Insufficient cluster resources
+</Step>
+
+<Step title="Delete the failed release">
+Remove the draft release and tag:
+
+```bash
+# Delete the GitHub release
+gh release delete v0.24.0 --yes
+
+# Delete the remote tag
+git push --delete origin v0.24.0
+
+# Delete the local tag
+git tag -d v0.24.0
+```
+</Step>
+
+<Step title="Fix the issue">
+Address the root cause:
+
+- Rotate GitHub token if expired
+- Check cluster resources
+- Verify network connectivity
+</Step>
+
+<Step title="Re-create the tag and release">
+Follow the release process again:
+
+```bash
+# Re-create the tag
+git tag -s v0.24.0 -m "Release v0.24.0"
+
+# Force push to re-trigger
+git push --force git@github.com:openshift-pipelines/pipelines-as-code.git v0.24.0
+```
+</Step>
+
+</Steps>
+
+### Fixing a Bad Release
+
+If you discover issues after publishing:
+
+**Option 1: Patch Release** (Recommended)
+- Fix the issues
+- Create a patch release (e.g., v0.24.1)
+- Update release notes to reference the fix
+
+**Option 2: Yank the Release** (Only for critical issues)
+- Mark the release as "Pre-release" in GitHub
+- Add a warning in the release notes
+- Immediately publish a fixed version
+
+<Warning>
+Never delete a published release unless it contains security vulnerabilities or leaked secrets.
+</Warning>
+
+## Release Checklist
+
+Use this checklist to ensure all steps are completed:
+
+- [ ] All CI checks passing on `main`
+- [ ] PAC CI cluster operational
+- [ ] Pending PRs reviewed and merged/deferred
+- [ ] GPG signing configured and tested
+- [ ] Local repository up to date (`git fetch -a origin`)
+- [ ] Version number chosen (major/minor/patch)
+- [ ] Release tag created with GPG signature
+- [ ] Tag pushed to repository
+- [ ] Release pipeline completed successfully
+- [ ] Release artifacts verified
+- [ ] Release notes edited and reviewed
+- [ ] Breaking changes documented
+- [ ] Upgrade notes added (if needed)
+- [ ] Release published (draft removed)
+- [ ] Documentation site updated
+- [ ] Release announced on Slack
+- [ ] Release announced on social media
+- [ ] GitHub milestone closed
+- [ ] Next milestone created
+
+## Release Schedule
+
+PAC doesn't follow a fixed release schedule. Releases are created when:
+
+- Significant features are ready
+- Critical bugs need to be fixed
+- Security vulnerabilities are patched
+- Community requests a release
+
+Typical cadence: **Every 2-4 weeks** for minor releases.
+
+## Version History
+
+View all releases:
+
+```bash
+# List all releases
+gh release list --limit 20
+
+# View specific release
+gh release view v0.24.0
+
+# Compare releases
+gh api repos/:owner/:repo/compare/v0.23.0...v0.24.0
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Contributing" icon="code-branch" href="/dev/overview">
+Learn how to contribute to PAC
+</Card>
+
+<Card title="Development Setup" icon="wrench" href="/dev/setup">
+Set up your development environment
+</Card>
+
+<Card title="Testing Guide" icon="flask" href="/dev/testing">
+Learn how to test changes
+</Card>
+
+<Card title="Architecture" icon="diagram-project" href="/dev/architecture">
+Understand the PAC architecture
+</Card>
+
+</CardGroup>

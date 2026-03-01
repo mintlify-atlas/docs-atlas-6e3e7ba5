@@ -1,0 +1,209 @@
+---
+title: Introduction to Pipelines as Code
+description: Learn how Pipelines as Code brings GitOps methodology to Tekton, enabling you to define and manage CI/CD pipelines directly from your source code repository.
+---
+
+# Introduction to Pipelines as Code
+
+Pipelines as Code is an opinionated CI/CD solution for Tekton and OpenShift Pipelines that allows you to define and manage your pipelines directly from your source code repository.
+
+## What is Pipelines as Code?
+
+Pipelines as Code brings the Pipelines-as-Code methodology to Tekton. It provides a simple and declarative way to define your pipelines in your Git repository and have them automatically executed on your Kubernetes cluster. It integrates seamlessly with Git providers like GitHub, GitLab, Bitbucket, and Forgejo, and provides feedback directly on your pull requests and commits.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get your first pipeline running in 5 minutes with the tkn pac CLI
+  </Card>
+  <Card title="Core concepts" icon="book" href="/concepts">
+    Understand the architecture and key components of Pipelines as Code
+  </Card>
+  <Card title="Repository CRD" icon="git-alt" href="/essentials/repository-crd">
+    Learn how to configure repositories using the Repository custom resource
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/api-reference/cli">
+    Explore tkn pac commands for managing pipelines and repositories
+  </Card>
+</CardGroup>
+
+## Why Pipelines as Code?
+
+Traditional CI/CD systems often require you to configure pipelines through web interfaces or separate configuration repositories. Pipelines as Code changes this by:
+
+### Version control
+Your pipeline definitions live alongside your code, so they're versioned, reviewed, and evolved together.
+
+### GitOps native
+Perfect fit for GitOps workflows where everything is defined as code and managed through Git.
+
+### Developer experience
+Developers can modify pipelines using familiar Git workflows instead of learning separate CI/CD interfaces.
+
+### Review process
+Pipeline changes go through the same pull request review process as your application code.
+
+### Branch-specific pipelines
+Different branches can have different pipeline configurations for feature development.
+
+### No vendor lock-in
+Portable Tekton-based pipelines that work across any Kubernetes cluster.
+
+## How it works
+
+Pipelines as Code follows a simple event-driven workflow:
+
+<Steps>
+  <Step title="Git event">
+    A developer pushes code, opens a pull request, or creates a tag
+  </Step>
+  <Step title="Event detection">
+    Pipelines as Code receives the webhook from your Git provider (GitHub, GitLab, etc.)
+  </Step>
+  <Step title="Repository scan">
+    PAC looks for a `.tekton/` directory in your repository
+  </Step>
+  <Step title="Pipeline resolution">
+    Found pipeline definitions are processed and resolved, including remote tasks from Tekton Hub
+  </Step>
+  <Step title="Execution">
+    PipelineRuns are created and executed on your Kubernetes cluster
+  </Step>
+  <Step title="Feedback">
+    Results are reported back to your Git provider as status checks, PR comments, or commit statuses
+  </Step>
+</Steps>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Git-based workflow" icon="code-branch">
+    Define your Tekton pipelines in your Git repository and have them automatically triggered on Git events like push, pull request, and comments.
+  </Card>
+  <Card title="Multi-provider support" icon="cloud">
+    Works with GitHub (via GitHub App & Webhook), GitLab, Forgejo (Tech Preview), and Bitbucket Data Center & Cloud via webhooks.
+  </Card>
+  <Card title="Annotation-driven" icon="tags">
+    Target specific events, branches, or CEL expressions and gate untrusted PRs with `/ok-to-test` and OWNERS files.
+  </Card>
+  <Card title="ChatOps control" icon="comments">
+    Use `/test`, `/retest`, `/cancel` commands and branch or tag selectors to rerun or stop PipelineRuns from PR comments or commit messages.
+  </Card>
+  <Card title="Skip CI support" icon="forward">
+    Use `[skip ci]`, `[ci skip]`, `[skip tkn]`, or `[tkn skip]` in commit messages to skip automatic PipelineRun execution for documentation updates or minor changes.
+  </Card>
+  <Card title="Rich feedback" icon="chart-line">
+    GitHub Checks capture per-task timing, log snippets, and optional error annotations while redacting secrets.
+  </Card>
+  <Card title="Inline resolution" icon="puzzle-piece">
+    The resolver bundles `.tekton/` resources, inlines remote tasks from Artifact Hub or Tekton Hub, and validates YAML before cluster submission.
+  </Card>
+  <Card title="Powerful CLI" icon="terminal">
+    `tkn pac` bootstraps installs, manages Repository CRDs, inspects logs, and resolves runs locally.
+  </Card>
+  <Card title="Automated housekeeping" icon="broom">
+    Keep namespaces tidy with automatic cleanup of completed PipelineRuns and cancellation of running PipelineRuns when new commits are pushed.
+  </Card>
+</CardGroup>
+
+## Use cases
+
+### Application CI/CD
+
+- **Multi-language support**: Build and test Go, Python, Node.js, Java applications
+- **Container workflows**: Build, scan, and push container images
+- **Multi-environment deployments**: Deploy to dev, staging, and production environments
+
+### GitOps workflows
+
+- **Infrastructure as Code**: Validate and apply Terraform, Helm charts, or Kubernetes manifests
+- **Configuration management**: Sync application configs across environments
+- **Compliance checking**: Run security scans and policy validation
+
+### Developer experience
+
+- **Pull request validation**: Run comprehensive test suites on every PR
+- **Branch-specific builds**: Different pipeline configurations for feature branches
+- **Dependency management**: Automated security scanning and dependency updates
+
+### Advanced scenarios
+
+- **Monorepo support**: Trigger specific pipelines based on changed paths
+- **Integration testing**: Multi-service testing with databases and external services
+- **Release automation**: Automated tagging, changelog generation, and artifact publishing
+
+## Quick example
+
+Here's a simple example of a Tekton pipeline triggered by pull requests using Pipelines as Code:
+
+```yaml .tekton/pull-request.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: pr-build
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+spec:
+  pipelineSpec:
+    tasks:
+    - name: fetch-repository
+      taskRef:
+        name: git-clone
+        resolver: hub
+      workspaces:
+      - name: output
+        workspace: source
+      params:
+      - name: url
+        value: "{{ repo_url }}"
+      - name: revision
+        value: "{{ revision }}"
+    - name: run-tests
+      runAfter: [fetch-repository]
+      taskRef:
+        name: golang-test
+        resolver: hub
+      workspaces:
+      - name: source
+        workspace: source
+  workspaces:
+  - name: source
+    emptyDir: {}
+```
+
+This pipeline will automatically run on every pull request to the `main` branch, fetch the code, and run tests.
+
+<Note>
+You can generate complete PipelineRun YAML using the `tkn pac generate` CLI command, which will prompt you for the event type and target branch.
+</Note>
+
+## Prerequisites
+
+Before getting started with Pipelines as Code, ensure you have:
+
+- **Kubernetes cluster**: Version 1.27+ recommended
+- **Tekton Pipelines**: Version 0.50.0+ (latest stable recommended)
+- **Git provider**: One of:
+  - GitHub (GitHub App or Webhook)
+  - GitLab (Webhook)
+  - Forgejo (Webhook) - Tech Preview
+  - Bitbucket Cloud/Data Center (Webhook)
+- **CLI tool**: `kubectl` for cluster access
+- **Optional**: `tkn` CLI for Tekton operations
+
+## What's next?
+
+<CardGroup cols={2}>
+  <Card title="Get started" icon="play" href="/quickstart">
+    Follow the quickstart guide to get your first pipeline running
+  </Card>
+  <Card title="Learn concepts" icon="graduation-cap" href="/concepts">
+    Understand the architecture and components of Pipelines as Code
+  </Card>
+  <Card title="Install" icon="download" href="/essentials/installation">
+    Detailed installation instructions for production environments
+  </Card>
+  <Card title="Configure providers" icon="plug" href="/providers/github-app">
+    Set up GitHub, GitLab, or other Git providers
+  </Card>
+</CardGroup>

@@ -1,0 +1,782 @@
+---
+title: Event Matching with Annotations
+description: Match PipelineRuns to Git events using annotations, branches, file patterns, and CEL expressions
+---
+
+## Overview
+
+Pipelines-as-Code uses annotations on PipelineRuns to determine which pipelines should run for specific Git events. This powerful matching system supports simple branch/event matching, file path patterns, labels, and advanced CEL expressions.
+
+## Basic Event Matching
+
+At minimum, specify which events and branches trigger your pipeline:
+
+```yaml
+metadata:
+  name: pr-pipeline
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+```
+
+This runs on pull requests targeting the `main` branch.
+
+## Event Types
+
+<ParamField path="pipelinesascode.tekton.dev/on-event" type="string" required>
+  The Git event type that triggers the pipeline
+  
+  **Values**: `pull_request`, `push`, `incoming`
+  
+  ```yaml
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    # Multiple events
+    pipelinesascode.tekton.dev/on-event: "[pull_request, push]"
+  ```
+</ParamField>
+
+<Tabs>
+<Tab title="pull_request">
+Triggers when:
+- Pull request opened
+- Pull request updated (new commits)
+- Pull request synchronized
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-event: "[pull_request]"
+  pipelinesascode.tekton.dev/on-target-branch: "[main]"
+```
+</Tab>
+
+<Tab title="push">
+Triggers when:
+- Commits pushed to a branch
+- Tags pushed to repository
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-event: "[push]"
+  pipelinesascode.tekton.dev/on-target-branch: "[main]"
+```
+</Tab>
+
+<Tab title="incoming">
+Triggers from:
+- Incoming webhooks (external triggers)
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-event: "[incoming]"
+```
+</Tab>
+</Tabs>
+
+## Branch Matching
+
+<ParamField path="pipelinesascode.tekton.dev/on-target-branch" type="string" required>
+  The branch(es) that trigger the pipeline
+  
+  ```yaml
+  annotations:
+    # Single branch
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    
+    # Multiple branches
+    pipelinesascode.tekton.dev/on-target-branch: "[main, develop, staging]"
+    
+    # Glob patterns
+    pipelinesascode.tekton.dev/on-target-branch: "[main, release-*]"
+  ```
+</ParamField>
+
+### Short vs Full Refs
+
+Both formats are supported:
+
+```yaml
+# Short ref
+pipelinesascode.tekton.dev/on-target-branch: "[main]"
+
+# Full ref
+pipelinesascode.tekton.dev/on-target-branch: "[refs/heads/main]"
+```
+
+### Glob Patterns
+
+<CodeGroup>
+```yaml All Branches
+annotations:
+  pipelinesascode.tekton.dev/on-target-branch: "[refs/heads/*]"
+```
+
+```yaml Release Branches
+annotations:
+  pipelinesascode.tekton.dev/on-target-branch: "[release-*]"
+```
+
+```yaml Feature Branches
+annotations:
+  pipelinesascode.tekton.dev/on-target-branch: "[feature/*, fix/*]"
+```
+
+```yaml Version Tags
+annotations:
+  pipelinesascode.tekton.dev/on-event: "[push]"
+  pipelinesascode.tekton.dev/on-target-branch: "[refs/tags/v*]"
+```
+</CodeGroup>
+
+### Tag Matching Example
+
+```yaml .tekton/tag-release.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: tag-release
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[refs/tags/v*]"
+spec:
+  params:
+    - name: git-tag
+      value: "{{ git_tag }}"  # Available for tag events
+  pipelineSpec:
+    params:
+      - name: git-tag
+    tasks:
+      - name: create-release
+        taskSpec:
+          params:
+            - name: tag
+          steps:
+            - name: release
+              image: alpine
+              script: |
+                echo "Creating release for tag $(params.tag)"
+        params:
+          - name: tag
+            value: "$(params.git-tag)"
+```
+
+<Warning>
+GitHub doesn't send webhook events when more than 3 tags are pushed simultaneously (e.g., `git push origin --tags`). Push tags in batches of 3 or fewer.
+</Warning>
+
+### Branch with Comma
+
+If a branch name contains a comma, use HTML entity `&#44;`:
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-target-branch: "[main, release&#44;nightly]"
+```
+
+This matches `main` and `release,nightly`.
+
+## File Path Matching
+
+Trigger pipelines based on which files changed in the event.
+
+<ParamField path="pipelinesascode.tekton.dev/on-path-change" type="string">
+  Trigger when files matching the pattern change
+  
+  ```yaml
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change: "[src/**, tests/**]"
+  ```
+  
+  Uses [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming))
+</ParamField>
+
+<ParamField path="pipelinesascode.tekton.dev/on-path-change-ignore" type="string">
+  Trigger when files **NOT** matching the pattern change
+  
+  ```yaml
+  annotations:
+    pipelinesascode.tekton.dev/on-path-change-ignore: "[docs/**, **.md]"
+  ```
+</ParamField>
+
+### Examples
+
+<CodeGroup>
+```yaml Documentation Only
+metadata:
+  name: docs-validation
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change: "[docs/**, **.md]"
+```
+
+```yaml Ignore Documentation
+metadata:
+  name: code-tests
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change-ignore: "[docs/**]"
+```
+
+```yaml Go Files Only
+metadata:
+  name: go-tests
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change: "[**/*.go]"
+```
+
+```yaml Combined Patterns
+metadata:
+  name: docs-not-generated
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    # Trigger on docs changes
+    pipelinesascode.tekton.dev/on-path-change: "[docs/**]"
+    # But NOT generated docs
+    pipelinesascode.tekton.dev/on-path-change-ignore: "[docs/generated/**]"
+```
+</CodeGroup>
+
+<Info>
+`on-path-change-ignore` takes precedence over `on-path-change`. If a file matches both, it's ignored.
+</Info>
+
+### Test Glob Patterns
+
+Use the `tkn pac` CLI to test glob patterns:
+
+```bash
+tkn pac info globbing "[src/**, tests/**]"
+```
+
+This shows which files in the current directory match the pattern.
+
+## Label Matching
+
+Trigger pipelines based on pull request labels.
+
+<ParamField path="pipelinesascode.tekton.dev/on-label" type="string">
+  Trigger when PR has specific labels
+  
+  ```yaml
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-label: "[bug, defect]"
+  ```
+  
+  **Supported**: GitHub, GitLab, Forgejo
+</ParamField>
+
+### Behavior
+
+- Triggers immediately when label is added
+- No other matching PipelineRuns are triggered
+- Triggers again on PR updates if label still present
+- Access labels via `{{ pull_request_labels }}` variable (newline-separated)
+
+### Example
+
+```yaml .tekton/bug-triage.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: bug-triage
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-label: "[bug, critical]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: notify-team
+        taskSpec:
+          steps:
+            - name: print-labels
+              image: alpine
+              script: |
+                #!/bin/sh
+                echo "PR has labels:"
+                for label in $(echo -e "{{ pull_request_labels }}"); do
+                  echo "  - $label"
+                done
+```
+
+## Comment-based Triggers
+
+Trigger pipelines when a comment matches a regex pattern.
+
+<ParamField path="pipelinesascode.tekton.dev/on-comment" type="string">
+  Trigger on matching comment (regex)
+  
+  ```yaml
+  annotations:
+    pipelinesascode.tekton.dev/on-comment: "^/deploy"
+  ```
+  
+  **Supported**: GitHub, GitLab, Forgejo (pull requests and pushed commits)
+</ParamField>
+
+### Regex Matching
+
+- Spaces and newlines stripped from beginning/end
+- `^` matches comment start
+- `$` matches comment end
+- Only **new** comments trigger (not edits)
+
+### Examples
+
+<CodeGroup>
+```yaml Deploy Command
+metadata:
+  name: deploy-staging
+  annotations:
+    pipelinesascode.tekton.dev/on-comment: "^/deploy-staging"
+```
+
+```yaml Merge PR Command
+metadata:
+  name: merge-pr
+  annotations:
+    pipelinesascode.tekton.dev/on-comment: "^/merge-pr"
+```
+
+```yaml Advanced Pattern
+metadata:
+  name: custom-build
+  annotations:
+    pipelinesascode.tekton.dev/on-comment: "^/build (staging|production)"
+```
+</CodeGroup>
+
+### Access Comment Content
+
+The triggering comment is available as `{{ trigger_comment }}`:
+
+```yaml
+params:
+  - name: comment
+    value: "{{ trigger_comment }}"
+```
+
+Newlines are replaced with `\n`. Restore them in scripts:
+
+```bash
+echo -e "{{ trigger_comment }}" > /tmp/comment
+```
+
+See [GitOps Commands - Custom Commands](/guides/gitops-commands#custom-gitops-commands) for details.
+
+## Advanced CEL Expressions
+
+For complex matching logic, use CEL (Common Expression Language).
+
+<ParamField path="pipelinesascode.tekton.dev/on-cel-expression" type="string">
+  CEL expression for advanced matching
+  
+  ```yaml
+  annotations:
+    pipelinesascode.tekton.dev/on-cel-expression: |
+      event == "pull_request" && target_branch == "main" && source_branch.startsWith("feature/")
+  ```
+</ParamField>
+
+<Warning>
+CEL expressions **override** all other annotations (`on-event`, `on-target-branch`, `on-label`, `on-path-change`). Use CEL alone or use the simple annotations.
+</Warning>
+
+### Available Variables
+
+| Variable | Type | Description | Example |
+|----------|------|-------------|----------|
+| `event` | string | Normalized event type | `pull_request`, `push`, `incoming` |
+| `event_type` | string | Provider-specific event | `pull_request` (GitHub), `Merge Request` (GitLab) |
+| `target_branch` | string | Target branch | `main` |
+| `source_branch` | string | Source branch (PR head) | `feature/my-feature` |
+| `target_url` | string | Target repository URL | `https://github.com/org/repo` |
+| `source_url` | string | Source repository URL (fork) | `https://github.com/user/repo` |
+| `event_title` | string | Event title (PR title or commit title) | `Fix bug in parser` |
+| `body` | object | Full webhook payload | `body.pull_request.number` |
+| `headers` | map | HTTP headers (lowercase) | `headers['x-github-event']` |
+| `files` | object | Changed files | `files.all`, `files.added`, `files.modified`, `files.deleted`, `files.renamed` |
+
+### CEL Examples
+
+<CodeGroup>
+```yaml Exclude Branch
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "pull_request" && target_branch != "experimental"
+```
+
+```yaml Regex Branch Match
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "pull_request" && source_branch.matches(".*feat/.*")
+```
+
+```yaml Multiple Conditions
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "pull_request" &&
+    target_branch == "main" &&
+    source_branch != "experimental" &&
+    !body.pull_request.draft
+```
+
+```yaml Specific Author
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    body.pull_request.user.login == "dependabot[bot]" &&
+    event == "pull_request"
+```
+
+```yaml Event Title Match
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "pull_request" && event_title.startsWith("[DOWNSTREAM]")
+```
+</CodeGroup>
+
+### File Matching with CEL
+
+CEL provides two methods for file matching:
+
+#### Method 1: `.pathChanged()` (Glob)
+
+Use glob patterns (all change types):
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "pull_request" && "docs/*.md".pathChanged()
+```
+
+#### Method 2: `files.` Properties (Regex + Change Type)
+
+Target specific change types with regex:
+
+<CodeGroup>
+```yaml Any Changed Files
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    files.all.exists(x, x.matches('tmp/'))
+```
+
+```yaml Added Files Only
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    files.added.exists(x, x.matches('src/|pkg/'))
+```
+
+```yaml Modified Go Files
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    files.modified.exists(x, x.matches('\\.go$'))
+```
+
+```yaml Exclude Non-Code Files
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "pull_request" &&
+    !files.all.all(x,
+      x.matches('^docs/') ||
+      x.matches('\\.md$') ||
+      x.matches('(\\.gitignore|OWNERS|LICENSE)$')
+    )
+```
+</CodeGroup>
+
+<Warning>
+In CEL regex, escape special characters with `\\`. For example, `\.go$` becomes `\\.go$` in the CEL string.
+</Warning>
+
+### Accessing Webhook Payload
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    body.pull_request.base.ref == "main" &&
+    body.pull_request.user.login == "admin" &&
+    body.action == "synchronize"
+```
+
+**GitHub payload fields**:
+- `body.pull_request.number`
+- `body.pull_request.title`
+- `body.pull_request.user.login`
+- `body.pull_request.draft`
+- `body.pull_request.base.ref` (target branch)
+- `body.pull_request.head.ref` (source branch)
+- `body.action` (opened, synchronize, etc.)
+
+### Accessing Headers
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    headers['x-github-event'] == "pull_request"
+```
+
+Headers are lowercase and provider-specific.
+
+### Custom Parameters in CEL
+
+Repository CR custom parameters are available in CEL:
+
+```yaml
+apiVersion: "pipelinesascode.tekton.dev/v1alpha1"
+kind: Repository
+spec:
+  params:
+    - name: enable_ci
+      value: "true"
+```
+
+```yaml
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    enable_ci == "true" && event == "pull_request"
+```
+
+<Warning>
+**Filtered parameters**: If a parameter has a `filter` that doesn't match, it's **undefined** in CEL, causing evaluation errors.
+
+```yaml
+spec:
+  params:
+    - name: docker_registry
+      value: "registry.staging.com"
+      filter: 'event == "pull_request"'
+```
+
+On a `push` event, `docker_registry` is undefined. CEL expression `docker_registry == "registry.staging.com"` produces an error, not `false`.
+
+**Solution**: Only reference filtered parameters when the filter matches, or use unfiltered parameters.
+</Warning>
+
+### Test CEL Expressions
+
+Test CEL expressions locally:
+
+```bash
+tkn pac cel --expression 'event == "pull_request" && target_branch == "main"' \
+  --event pull_request \
+  --target-branch main
+```
+
+## Multiple PipelineRuns
+
+When multiple PipelineRuns match an event, they run in **parallel**:
+
+```yaml
+# .tekton/build.yaml
+metadata:
+  name: build
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+```
+
+```yaml
+# .tekton/test.yaml
+metadata:
+  name: test
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+```
+
+```yaml
+# .tekton/lint.yaml
+metadata:
+  name: lint
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+```
+
+All three run simultaneously (unless `concurrency_limit` is set in the Repository CR).
+
+## Complete Examples
+
+### Monorepo Service-Specific Pipelines
+
+```yaml .tekton/service-a.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: service-a-ci
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change: "[service-a/**, shared/**]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: build-service-a
+        # ...
+```
+
+```yaml .tekton/service-b.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: service-b-ci
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change: "[service-b/**, shared/**]"
+spec:
+  pipelineSpec:
+    tasks:
+      - name: build-service-b
+        # ...
+```
+
+### Release Pipeline (Tags)
+
+```yaml .tekton/release.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: release
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[refs/tags/v*.*.*]"
+spec:
+  params:
+    - name: tag
+      value: "{{ git_tag }}"
+  pipelineSpec:
+    params:
+      - name: tag
+    tasks:
+      - name: create-github-release
+        # ...
+      - name: publish-artifacts
+        # ...
+```
+
+### Skip Draft PRs
+
+```yaml .tekton/pr.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: pr-ci
+  annotations:
+    pipelinesascode.tekton.dev/on-cel-expression: |
+      event == "pull_request" &&
+      target_branch == "main" &&
+      !body.pull_request.draft
+spec:
+  # ...
+```
+
+### Dependabot Auto-Merge
+
+```yaml .tekton/dependabot-auto-merge.yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: dependabot-auto-merge
+  annotations:
+    pipelinesascode.tekton.dev/on-cel-expression: |
+      event == "pull_request" &&
+      body.pull_request.user.login == "dependabot[bot]" &&
+      event_title.startsWith("Bump")
+spec:
+  pipelineSpec:
+    tasks:
+      - name: verify-tests-passed
+        # ...
+      - name: auto-merge
+        # ...
+```
+
+## Best Practices
+
+<Steps>
+
+### Use simple annotations when possible
+
+Prefer `on-event` and `on-target-branch` over CEL for basic matching:
+
+```yaml
+# ✅ Good (simple, readable)
+annotations:
+  pipelinesascode.tekton.dev/on-event: "[pull_request]"
+  pipelinesascode.tekton.dev/on-target-branch: "[main]"
+
+# ❌ Overkill (unnecessary complexity)
+annotations:
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "pull_request" && target_branch == "main"
+```
+
+### Test glob patterns locally
+
+```bash
+tkn pac info globbing "[src/**, tests/**]"
+```
+
+### Test CEL expressions
+
+```bash
+tkn pac cel \
+  --expression 'event == "pull_request" && files.all.exists(x, x.matches("\\.go$"))' \
+  --event pull_request
+```
+
+### Document complex CEL expressions
+
+Add comments explaining complex logic:
+
+```yaml
+annotations:
+  # Only run on PRs to main from feature branches
+  # Skip draft PRs and docs-only changes
+  pipelinesascode.tekton.dev/on-cel-expression: |
+    event == "pull_request" &&
+    target_branch == "main" &&
+    source_branch.startsWith("feature/") &&
+    !body.pull_request.draft &&
+    !files.all.all(x, x.matches('^docs/'))
+```
+
+### Avoid filtering on body payload with GitOps commands
+
+GitOps commands (e.g., `/retest`) change the payload to the comment event, breaking body-based CEL expressions.
+
+Instead, use `/test <pipelinerun-name>` or update the PR with:
+
+```bash
+git commit --amend --no-edit && git push --force-with-lease
+```
+
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Pipelines" icon="code" href="/guides/creating-pipelines">
+    Author PipelineRuns with dynamic variables
+  </Card>
+  <Card title="GitOps Commands" icon="terminal" href="/guides/gitops-commands">
+    Trigger pipelines with /test, /retest, and custom commands
+  </Card>
+  <Card title="Running Pipelines" icon="play" href="/guides/running-pipelines">
+    Understand execution and authorization
+  </Card>
+  <Card title="Repository CRD" icon="database" href="/guides/repository-crd">
+    Configure the Repository Custom Resource
+  </Card>
+</CardGroup>
